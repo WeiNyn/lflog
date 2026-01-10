@@ -4,3 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+chrono = { version = "0.4.42", features = ["serde"] }
+datafusion = "51.0.0"
+datafusion-common = "51.0.0"
+datafusion-expr = "51.0.0"
+datafusion-physical-expr-adapter = "51.0.0"
+datafusion-proto = "51.0.0"
+datafusion-sql = "51.0.0"
+env_logger = "0.11.8"
+log = "0.4.29"
+memap2 = "0.1.2"
+rayon = "1.11.0"
+regex = "1.12.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = ["full"] }
+toml = "0.9.11"
+tracing = "0.1.44"
