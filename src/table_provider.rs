@@ -205,4 +205,24 @@ pub mod tests {
 
         let _ = df.show_limit(10).await;
     }
+
+    #[tokio::test]
+    async fn test_log_table_provider_with_macros() {
+        let ctx = SessionContext::new();
+
+        let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
+        let scanner = Scanner::new(pattern.to_string());
+        let log_table = LogTableProvider {
+            scanner,
+            file_path: String::from("loghub/Apache/Apache_2k.log"),
+        };
+
+        let _ = ctx.register_table("log_mac", Arc::new(log_table));
+        let df = ctx
+            .sql("SELECT time, level, message FROM log_mac LIMIT 5")
+            .await
+            .unwrap();
+
+        let _ = df.show_limit(5).await;
+    }
 }
