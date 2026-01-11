@@ -176,15 +176,64 @@ fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<F
             Ok((format!(r"(?:{})", items.join("|")), Some(FieldType::Enum)))
         }
         "datetime" | "ts" => {
-            if !args.is_empty() {
+            if args.is_empty() {
                 Ok((r"\S+".to_string(), Some(FieldType::DateTime)))
             } else {
-                Ok((r"\S+".to_string(), Some(FieldType::DateTime)))
+                // translate strftime-like format string(s) into a regex fragment
+                let mut frags = Vec::new();
+                for fmt in args.iter() {
+                    let frag = format_to_regex(fmt)?;
+                    frags.push(frag);
+                }
+                if frags.len() == 1 {
+                    Ok((frags.into_iter().next().unwrap(), Some(FieldType::DateTime)))
+                } else {
+                    Ok((
+                        format!("(?:{})", frags.join("|")),
+                        Some(FieldType::DateTime),
+                    ))
+                }
             }
         }
         "any" => Ok((r".+?".to_string(), Some(FieldType::String))),
         _ => bail!("unknown macro '{}'", name),
     }
+}
+
+fn format_to_regex(fmt: &str) -> Result<String> {
+    // naive strftime -> regex translator for common directives
+    // supports: %Y, %y, %m, %d, %H, %M, %S, %f, %z, %Z, %b, %B, %a, %A
+    let mut out = String::new();
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            if let Some(d) = chars.next() {
+                match d {
+                    'Y' => out.push_str(r"\d{4}"),
+                    'y' => out.push_str(r"\d{2}"),
+                    'm' => out.push_str(r"\d{2}"),
+                    'd' => out.push_str(r"\d{2}"),
+                    'H' => out.push_str(r"\d{2}"),
+                    'M' => out.push_str(r"\d{2}"),
+                    'S' => out.push_str(r"\d{2}"),
+                    'f' => out.push_str(r"\d+"),
+                    'z' => out.push_str(r"[+-]\d{4}"),
+                    'Z' => out.push_str(r"[A-Za-z/_+-]+"),
+                    'b' | 'B' => out.push_str(r"[A-Za-z]+"),
+                    'a' | 'A' => out.push_str(r"[A-Za-z]+"),
+                    '%' => out.push('%'),
+                    other => return bail!("unsupported datetime directive: %{}", other),
+                }
+            } else {
+                return bail!("incomplete datetime format string: ends with %");
+            }
+        } else {
+            // escape regex metacharacters in literals
+            let esc = regex::escape(&c.to_string());
+            out.push_str(&esc);
+        }
+    }
+    Ok(out)
 }
 
 pub fn expand_macros(pattern: &str) -> Result<(String, Vec<String>, HashMap<String, FieldType>)> {
