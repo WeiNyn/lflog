@@ -247,8 +247,14 @@ pub struct Scanner {
 
 impl Scanner {
     pub fn new(pattern: String) -> Self {
-        let (expanded, field_names, type_hints) = expand_macros(&pattern).unwrap();
+        let (expanded, mut field_names, type_hints) = expand_macros(&pattern).unwrap();
         let regex = Regex::new(&expanded).unwrap();
+        if field_names.is_empty() {
+            field_names = regex
+                .capture_names()
+                .filter_map(|s| s.map(|s| s.to_string()))
+                .collect();
+        }
         Self {
             regex,
             field_names,
