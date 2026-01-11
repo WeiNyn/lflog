@@ -370,6 +370,19 @@ pub mod tests {
     }
 
     #[test]
+    fn test_datetime_multiple_formats() {
+        let pat = "{{ts:datetime(\"%Y-%m-%d %H:%M:%S\",\"%d/%b/%Y:%H:%M:%S\")}} - msg";
+        let (expanded, fields, hints) = expand_macros(pat).unwrap();
+        assert!(expanded.contains("|"));
+        assert_eq!(fields.len(), 1);
+        let hint = hints.get(&fields[0]).unwrap();
+        assert_eq!(*hint, FieldType::DateTime);
+        let re = Regex::new(&expanded).unwrap();
+        assert!(re.is_match("2023-05-03 12:34:56 - msg"));
+        assert!(re.is_match("03/May/2023:12:34:56 - msg"));
+    }
+
+    #[test]
     fn test_scanner_integration() {
         let pattern = r"^\[(?P<time>\w{3} \w{3} \d{1,2})\] \[(?P<level>[^\]]+)\] (?P<message>.*)$"
             .to_string();
