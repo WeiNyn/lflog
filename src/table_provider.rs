@@ -17,9 +17,71 @@ use std::{
     io::{BufRead, BufReader},
 };
 
-use datafusion::arrow::array::StringBuilder;
+use datafusion::arrow::array::{
+    ArrayBuilder, ArrayRef, Float64Builder, Int32Builder, StringBuilder,
+};
 
-use crate::profile::Scanner;
+use crate::profile::{FieldType, Scanner};
+
+pub struct FieldsBuilder {
+    builders: Vec<Box<dyn ArrayBuilder>>,
+}
+
+impl FieldsBuilder {
+    pub fn new(fields: &[&FieldType]) -> Self {
+        let builders = fields
+            .iter()
+            .map(|field| match field {
+                FieldType::String => Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
+                FieldType::Int => Box::new(Int32Builder::new()) as Box<dyn ArrayBuilder>,
+                FieldType::Float => Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
+                FieldType::DateTime => Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
+                FieldType::Enum => Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
+                FieldType::Json => Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
+            })
+            .collect();
+        Self { builders }
+    }
+
+    pub fn push(&mut self, field_types: &[&FieldType], values: &[String]) {
+        for ((builder, field_type), value) in self.builders.iter_mut().zip(field_types).zip(values)
+        {
+            match field_type {
+                FieldType::String | FieldType::DateTime | FieldType::Enum | FieldType::Json => {
+                    builder
+                        .as_any_mut()
+                        .downcast_mut::<StringBuilder>()
+                        .unwrap()
+                        .append_value(value);
+                }
+                FieldType::Int => {
+                    let int_builder = builder.as_any_mut().downcast_mut::<Int32Builder>().unwrap();
+                    match value.parse::<i32>() {
+                        Ok(i) => int_builder.append_value(i),
+                        Err(_) => int_builder.append_null(),
+                    }
+                }
+                FieldType::Float => {
+                    let float_builder = builder
+                        .as_any_mut()
+                        .downcast_mut::<Float64Builder>()
+                        .unwrap();
+                    match value.parse::<f64>() {
+                        Ok(f) => float_builder.append_value(f),
+                        Err(_) => float_builder.append_null(),
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn finish(&mut self) -> Vec<ArrayRef> {
+        self.builders
+            .iter_mut()
+            .map(|builder| builder.finish())
+            .collect()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LogTableProvider {
@@ -112,11 +174,22 @@ impl ExecutionPlan for LogTableExec {
         _partition: usize,
         _context: std::sync::Arc<datafusion::execution::TaskContext>,
     ) -> datafusion_common::Result<datafusion::execution::SendableRecordBatchStream> {
-        let mut fields_map = Vec::new();
-
-        for _field_name in self.provider.scanner.field_names.iter() {
-            fields_map.push(StringBuilder::new());
-        }
+        // Get field types in the same order as field_names, defaulting to String
+        let default_string = FieldType::String;
+        let field_types: Vec<&FieldType> = self
+            .provider
+            .scanner
+            .field_names
+            .iter()
+            .map(|name| {
+                self.provider
+                    .scanner
+                    .type_hints
+                    .get(name)
+                    .unwrap_or(&default_string)
+            })
+            .collect();
+        let mut fields_builder = FieldsBuilder::new(&field_types);
 
         let file = File::open(self.provider.file_path.clone()).unwrap();
         let reader = BufReader::new(file);
@@ -126,21 +199,13 @@ impl ExecutionPlan for LogTableExec {
             let fields = self.provider.scanner.scan(&line);
 
             if let Some(fields) = fields {
-                for (i, field) in fields.iter().enumerate() {
-                    fields_map[i].append_value(field);
-                }
+                fields_builder.push(&field_types, &fields);
             }
         }
 
-        let partitions = RecordBatch::try_new(
-            self.projected_schema.clone(),
-            vec![
-                Arc::new(fields_map[0].finish()),
-                Arc::new(fields_map[1].finish()),
-                Arc::new(fields_map[2].finish()),
-            ],
-        )
-        .unwrap();
+        let columns = fields_builder.finish();
+
+        let partitions = RecordBatch::try_new(self.projected_schema.clone(), columns).unwrap();
 
         Ok(Box::pin(MemoryStream::try_new(
             vec![partitions],
@@ -160,11 +225,20 @@ impl TableProvider for LogTableProvider {
 
     #[doc = " Get a reference to the schema for this table"]
     fn schema(&self) -> SchemaRef {
-        SchemaRef::new(Schema::new(vec![
-            Field::new("time", DataType::Utf8, true),
-            Field::new("level", DataType::Utf8, true),
-            Field::new("message", DataType::Utf8, true),
-        ]))
+        let fields: Vec<Field> = self
+            .scanner
+            .field_names
+            .iter()
+            .map(|name| {
+                let data_type = match self.scanner.type_hints.get(name) {
+                    Some(FieldType::Int) => DataType::Int32,
+                    Some(FieldType::Float) => DataType::Float64,
+                    _ => DataType::Utf8,
+                };
+                Field::new(name, data_type, true)
+            })
+            .collect();
+        SchemaRef::new(Schema::new(fields))
     }
 
     #[doc = " Get the type of this table for metadata/catalog purposes."]

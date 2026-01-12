@@ -46,15 +46,13 @@ fn split_args(s: &str) -> Vec<String> {
             } else {
                 cur.push(c);
             }
+        } else if c == '\'' || c == '"' {
+            in_quote = Some(c);
+        } else if c == ',' {
+            args.push(cur.trim().to_string());
+            cur.clear();
         } else {
-            if c == '\'' || c == '"' {
-                in_quote = Some(c);
-            } else if c == ',' {
-                args.push(cur.trim().to_string());
-                cur.clear();
-            } else {
-                cur.push(c);
-            }
+            cur.push(c);
         }
     }
     if !cur.trim().is_empty() {
@@ -222,10 +220,10 @@ fn format_to_regex(fmt: &str) -> Result<String> {
                     'b' | 'B' => out.push_str(r"[A-Za-z]+"),
                     'a' | 'A' => out.push_str(r"[A-Za-z]+"),
                     '%' => out.push('%'),
-                    other => return bail!("unsupported datetime directive: %{}", other),
+                    other => bail!("unsupported datetime directive: %{}", other),
                 }
             } else {
-                return bail!("incomplete datetime format string: ends with %");
+                bail!("incomplete datetime format string: ends with %");
             }
         } else {
             // escape regex metacharacters in literals
@@ -331,10 +329,6 @@ impl Scanner {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use std::{
-        fs::File,
-        io::{BufRead, BufReader},
-    };
 
     #[test]
     fn test_expand_shorthand_number() {
