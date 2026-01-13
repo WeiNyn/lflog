@@ -3,6 +3,9 @@
 //! Parses macro invocations like `field:datetime("%Y-%m-%d")` into structured data.
 
 use anyhow::{Result, bail};
+use serde::{Deserialize, Serialize};
+
+use crate::FieldType;
 
 /// Represents a parsed macro invocation.
 #[derive(Debug, Clone)]
@@ -125,5 +128,55 @@ pub fn parse_macro_invocation(s: &str) -> Result<MacroInvocation> {
             name: s.to_string(),
             args: vec![],
         })
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CustomMacro {
+    pub name: String,
+    pub pattern: String,
+    pub type_hint: Option<FieldType>,
+    pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Profile {
+    pub name: String,
+    pub custom_macros: Vec<CustomMacro>,
+    pub pattern: String,
+    pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Profiles {
+    pub custom_macros: Vec<CustomMacro>,
+    pub profiles: Vec<Profile>,
+}
+
+impl Profiles {
+    pub fn from_file(path: &str) -> Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let mut profiles: Profiles = toml::from_str(&content)?;
+
+        // Merge profile macros with custom macros
+        for profile in profiles.profiles.iter_mut() {
+            profile.custom_macros.extend(profiles.custom_macros.clone());
+        }
+
+        Ok(profiles)
+    }
+
+    pub fn get_macro(&self, name: &str) -> Option<&CustomMacro> {
+        self.custom_macros.iter().find(|m| m.name == name)
+    }
+
+    pub fn get_profile(&self, name: &str) -> Option<&Profile> {
+        self.profiles.iter().find(|p| p.name == name)
+    }
+}
+
+impl Profile {
+    pub fn get_macro(&self, name: &str) -> Option<&CustomMacro> {
+        self.custom_macros.iter().find(|m| m.name == name)
     }
 }

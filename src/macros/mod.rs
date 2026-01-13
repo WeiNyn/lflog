@@ -4,7 +4,7 @@
 //! such as `{{field:datetime("%Y-%m-%d")}}` or `{{count:number}}`.
 
 mod expander;
-mod parser;
+pub mod parser;
 
 pub use expander::expand_macros;
-pub use parser::MacroInvocation;
+pub use parser::{CustomMacro, MacroInvocation, Profile, Profiles};

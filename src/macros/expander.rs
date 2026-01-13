@@ -6,8 +6,24 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 
-use crate::macros::parser::parse_macro_invocation;
+use crate::macros::parser::{CustomMacro, parse_macro_invocation};
 use crate::types::FieldType;
+
+/// Expand a single macro - checks custom macros first, then falls back to builtins.
+fn expand_macro(
+    name: &str,
+    args: &[String],
+    custom_macros: Option<&[CustomMacro]>,
+) -> Result<(String, Option<FieldType>)> {
+    // Check custom macros first
+    if let Some(customs) = custom_macros
+        && let Some(custom) = customs.iter().find(|m| m.name == name)
+    {
+        return Ok((custom.pattern.clone(), custom.type_hint.clone()));
+    }
+    // Fall back to builtin
+    expand_builtin_macro(name, args)
+}
 
 /// Expand a built-in macro into a regex fragment and optional field type hint.
 fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<FieldType>)> {
@@ -110,11 +126,18 @@ fn format_to_regex(fmt: &str) -> Result<String> {
 
 /// Expand all macros in a pattern string.
 ///
+/// Arguments:
+/// - `pattern`: The pattern string containing macros like `{{field:macro}}`
+/// - `custom_macros`: Optional slice of custom macros to check before builtins
+///
 /// Returns:
 /// - The expanded regex pattern
 /// - A list of field names in order
 /// - A map of field names to their type hints
-pub fn expand_macros(pattern: &str) -> Result<(String, Vec<String>, HashMap<String, FieldType>)> {
+pub fn expand_macros(
+    pattern: &str,
+    custom_macros: Option<&[CustomMacro]>,
+) -> Result<(String, Vec<String>, HashMap<String, FieldType>)> {
     let mut out = String::with_capacity(pattern.len());
     let mut i = 0usize;
     let bytes = pattern.as_bytes();
@@ -144,7 +167,7 @@ pub fn expand_macros(pattern: &str) -> Result<(String, Vec<String>, HashMap<Stri
             }
             let content = &pattern[i + 2..j];
             let inv = parse_macro_invocation(content)?;
-            let (frag, hint) = expand_builtin_macro(&inv.name, &inv.args)?;
+            let (frag, hint) = expand_macro(&inv.name, &inv.args, custom_macros)?;
             let field_name = if let Some(f) = inv.field {
                 f
             } else {
@@ -173,7 +196,7 @@ mod tests {
     #[test]
     fn test_expand_shorthand_number() {
         let pat = "qty: {{number:3-5}}";
-        let (expanded, fields, _) = expand_macros(pat).unwrap();
+        let (expanded, fields, _) = expand_macros(pat, None).unwrap();
         assert!(expanded.contains(r"\d{3,5}"));
         assert_eq!(fields.len(), 1);
     }
@@ -181,7 +204,7 @@ mod tests {
     #[test]
     fn test_auto_named_capture() {
         let pat = "count={{number}} items";
-        let (expanded, fields, _) = expand_macros(pat).unwrap();
+        let (expanded, fields, _) = expand_macros(pat, None).unwrap();
         assert!(expanded.contains("(?P<auto_1_number>"));
         assert_eq!(fields, vec!["auto_1_number".to_string()]);
     }
@@ -189,7 +212,7 @@ mod tests {
     #[test]
     fn test_named_field_capture() {
         let pat = "user {{name:var_name}} logged";
-        let (expanded, fields, _) = expand_macros(pat).unwrap();
+        let (expanded, fields, _) = expand_macros(pat, None).unwrap();
         assert!(expanded.contains("(?P<name>"));
         assert_eq!(fields, vec!["name".to_string()]);
     }
@@ -197,7 +220,7 @@ mod tests {
     #[test]
     fn test_datetime_macro_hint() {
         let pat = "{{ts:datetime(\"%Y-%m-%d %H:%M:%S\")}} - msg";
-        let (_expanded, fields, hints) = expand_macros(pat).unwrap();
+        let (_expanded, fields, hints) = expand_macros(pat, None).unwrap();
         assert_eq!(fields.len(), 1);
         let hint = hints.get(&fields[0]).unwrap();
         assert_eq!(*hint, FieldType::DateTime);
@@ -206,7 +229,7 @@ mod tests {
     #[test]
     fn test_datetime_multiple_formats() {
         let pat = "{{ts:datetime(\"%Y-%m-%d %H:%M:%S\",\"%d/%b/%Y:%H:%M:%S\")}} - msg";
-        let (expanded, fields, hints) = expand_macros(pat).unwrap();
+        let (expanded, fields, hints) = expand_macros(pat, None).unwrap();
         assert!(expanded.contains("|"));
         assert_eq!(fields.len(), 1);
         let hint = hints.get(&fields[0]).unwrap();
@@ -214,5 +237,20 @@ mod tests {
         let re = regex::Regex::new(&expanded).unwrap();
         assert!(re.is_match("2023-05-03 12:34:56 - msg"));
         assert!(re.is_match("03/May/2023:12:34:56 - msg"));
+    }
+
+    #[test]
+    fn test_custom_macro() {
+        let custom = CustomMacro {
+            name: "ip".to_string(),
+            pattern: r"\d{1,3}(?:\.\d{1,3}){3}".to_string(),
+            type_hint: Some(FieldType::String),
+            description: Some("IPv4 address".to_string()),
+        };
+        let pat = "{{client:ip}} connected";
+        let (expanded, fields, hints) = expand_macros(pat, Some(&[custom])).unwrap();
+        assert!(expanded.contains(r"\d{1,3}(?:\.\d{1,3}){3}"));
+        assert_eq!(fields, vec!["client".to_string()]);
+        assert_eq!(*hints.get("client").unwrap(), FieldType::String);
     }
 }
