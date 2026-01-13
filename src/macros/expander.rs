@@ -1,142 +1,15 @@
-use anyhow::{Result, bail};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
+//! Macro expansion logic.
+//!
+//! Expands macro invocations into regex patterns with field type hints.
+
 use std::collections::HashMap;
 
-#[derive(Serialize, Deserialize)]
-pub struct Profile {
-    name: String,
-    prefilter: String,
-    pattern: String,
-    version: String,
-    field_names: Vec<String>,
-}
+use anyhow::{Result, bail};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FieldType {
-    String,
-    Int,
-    Float,
-    DateTime,
-    Enum,
-    Json,
-}
+use crate::macros::parser::parse_macro_invocation;
+use crate::types::FieldType;
 
-#[derive(Debug, Clone)]
-struct MacroInvocation {
-    field: Option<String>,
-    name: String,
-    args: Vec<String>,
-}
-
-fn split_args(s: &str) -> Vec<String> {
-    let mut args = Vec::new();
-    let mut cur = String::new();
-    let mut in_quote: Option<char> = None;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if let Some(q) = in_quote {
-            if c == '\\' {
-                if let Some(&next) = chars.peek() {
-                    cur.push(next);
-                    chars.next();
-                }
-            } else if c == q {
-                in_quote = None;
-            } else {
-                cur.push(c);
-            }
-        } else if c == '\'' || c == '"' {
-            in_quote = Some(c);
-        } else if c == ',' {
-            args.push(cur.trim().to_string());
-            cur.clear();
-        } else {
-            cur.push(c);
-        }
-    }
-    if !cur.trim().is_empty() {
-        args.push(cur.trim().to_string());
-    }
-    args.into_iter()
-        .map(|a| {
-            if (a.starts_with('"') && a.ends_with('"'))
-                || (a.starts_with('\'') && a.ends_with('\''))
-            {
-                a[1..a.len() - 1].to_string()
-            } else {
-                a
-            }
-        })
-        .collect()
-}
-
-fn parse_macro_invocation(s: &str) -> Result<MacroInvocation> {
-    let s = s.trim();
-    if s.is_empty() {
-        bail!("empty macro token");
-    }
-    if let Some(paren_start) = s.find('(') {
-        let before = &s[..paren_start];
-        let after = &s[paren_start + 1..];
-        if !after.ends_with(')') {
-            bail!("unclosed parenthesis in macro invocation: {}", s);
-        }
-        let inside = &after[..after.len() - 1];
-        if let Some(colon_pos) = before.find(':') {
-            let field = before[..colon_pos].trim().to_string();
-            let name = before[colon_pos + 1..].trim().to_string();
-            let args = split_args(inside);
-            Ok(MacroInvocation {
-                field: Some(field),
-                name,
-                args,
-            })
-        } else {
-            let name = before.trim().to_string();
-            let args = split_args(inside);
-            Ok(MacroInvocation {
-                field: None,
-                name,
-                args,
-            })
-        }
-    } else if let Some(colon_pos) = s.find(':') {
-        let left = s[..colon_pos].trim();
-        let right = s[colon_pos + 1..].trim();
-        if right
-            .chars()
-            .next()
-            .map(|c| c.is_ascii_digit())
-            .unwrap_or(false)
-            || right.contains('-')
-            || right.contains(',')
-        {
-            let name = left.to_string();
-            let args = vec![right.to_string()];
-            Ok(MacroInvocation {
-                field: None,
-                name,
-                args,
-            })
-        } else {
-            let field = left.to_string();
-            let name = right.to_string();
-            Ok(MacroInvocation {
-                field: Some(field),
-                name,
-                args: vec![],
-            })
-        }
-    } else {
-        Ok(MacroInvocation {
-            field: None,
-            name: s.to_string(),
-            args: vec![],
-        })
-    }
-}
-
+/// Expand a built-in macro into a regex fragment and optional field type hint.
 fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<FieldType>)> {
     match name.to_lowercase().as_str() {
         "number" | "num" => {
@@ -198,6 +71,7 @@ fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<F
     }
 }
 
+/// Convert a strftime format string to a regex pattern.
 fn format_to_regex(fmt: &str) -> Result<String> {
     // naive strftime -> regex translator for common directives
     // supports: %Y, %y, %m, %d, %H, %M, %S, %f, %z, %Z, %b, %B, %a, %A
@@ -234,6 +108,12 @@ fn format_to_regex(fmt: &str) -> Result<String> {
     Ok(out)
 }
 
+/// Expand all macros in a pattern string.
+///
+/// Returns:
+/// - The expanded regex pattern
+/// - A list of field names in order
+/// - A map of field names to their type hints
 pub fn expand_macros(pattern: &str) -> Result<(String, Vec<String>, HashMap<String, FieldType>)> {
     let mut out = String::with_capacity(pattern.len());
     let mut i = 0usize;
@@ -241,6 +121,7 @@ pub fn expand_macros(pattern: &str) -> Result<(String, Vec<String>, HashMap<Stri
     let mut auto_idx = 0usize;
     let mut field_names: Vec<String> = Vec::new();
     let mut type_hints: HashMap<String, FieldType> = HashMap::new();
+
     while i < bytes.len() {
         if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'{' {
             if i > 0 && bytes[i - 1] == b'\\' {
@@ -285,49 +166,8 @@ pub fn expand_macros(pattern: &str) -> Result<(String, Vec<String>, HashMap<Stri
     Ok((out, field_names, type_hints))
 }
 
-#[derive(Debug, Clone)]
-pub struct Scanner {
-    regex: Regex,
-    pub field_names: Vec<String>,
-    pub type_hints: HashMap<String, FieldType>,
-}
-
-impl Scanner {
-    pub fn new(pattern: String) -> Self {
-        let (expanded, mut field_names, type_hints) = expand_macros(&pattern).unwrap();
-        let regex = Regex::new(&expanded).unwrap();
-        if field_names.is_empty() {
-            field_names = regex
-                .capture_names()
-                .filter_map(|s| s.map(|s| s.to_string()))
-                .collect();
-        }
-        Self {
-            regex,
-            field_names,
-            type_hints,
-        }
-    }
-
-    pub fn scan(&self, line: &str) -> Option<Vec<String>> {
-        if let Some(captures) = self.regex.captures(line) {
-            let mut values = Vec::new();
-            for name in &self.field_names {
-                if let Some(value) = captures.name(name) {
-                    values.push(value.as_str().to_string());
-                } else {
-                    values.push(String::new());
-                }
-            }
-            Some(values)
-        } else {
-            None
-        }
-    }
-}
-
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
 
     #[test]
@@ -371,18 +211,8 @@ pub mod tests {
         assert_eq!(fields.len(), 1);
         let hint = hints.get(&fields[0]).unwrap();
         assert_eq!(*hint, FieldType::DateTime);
-        let re = Regex::new(&expanded).unwrap();
+        let re = regex::Regex::new(&expanded).unwrap();
         assert!(re.is_match("2023-05-03 12:34:56 - msg"));
         assert!(re.is_match("03/May/2023:12:34:56 - msg"));
-    }
-
-    #[test]
-    fn test_scanner_integration() {
-        let pattern = r"^\[(?P<time>\w{3} \w{3} \d{1,2})\] \[(?P<level>[^\]]+)\] (?P<message>.*)$"
-            .to_string();
-        let scanner = Scanner::new(pattern);
-        let line = "[Mon Jan 1] [INFO] hello";
-        let res = scanner.scan(line);
-        assert!(res.is_some());
     }
 }

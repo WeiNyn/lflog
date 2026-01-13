@@ -1,0 +1,215 @@
+//! LogTableExec execution plan implementation.
+
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::execution::SendableRecordBatchStream;
+use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
+use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
+use datafusion::physical_plan::memory::MemoryStream;
+use datafusion::physical_plan::{DisplayAs, ExecutionPlan, PlanProperties};
+use datafusion_common::Result;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::sync::Arc;
+
+use crate::datafusion::builder::FieldsBuilder;
+use crate::datafusion::provider::LogTableProvider;
+use crate::types::FieldType;
+
+/// Physical execution plan for reading log files.
+#[derive(Debug)]
+pub struct LogTableExec {
+    provider: LogTableProvider,
+    projected_schema: SchemaRef,
+    plan_properties: PlanProperties,
+}
+
+impl LogTableExec {
+    /// Create a new LogTableExec with optional column projections.
+    pub fn new(
+        projections: Option<&Vec<usize>>,
+        schema: SchemaRef,
+        provider: LogTableProvider,
+    ) -> Self {
+        let projected_schema = projections
+            .map(|p| {
+                let fields: Vec<_> = p.iter().map(|i| schema.field(*i).clone()).collect();
+                SchemaRef::new(datafusion::arrow::datatypes::Schema::new(fields))
+            })
+            .unwrap_or_else(|| schema.clone());
+
+        let plan_properties = PlanProperties::new(
+            EquivalenceProperties::new(projected_schema.clone()),
+            Partitioning::UnknownPartitioning(1),
+            EmissionType::Final,
+            Boundedness::Bounded,
+        );
+
+        Self {
+            provider,
+            projected_schema,
+            plan_properties,
+        }
+    }
+}
+
+impl DisplayAs for LogTableExec {
+    fn fmt_as(
+        &self,
+        _t: datafusion::physical_plan::DisplayFormatType,
+        _f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        write!(_f, "LogTableExec")
+    }
+}
+
+impl ExecutionPlan for LogTableExec {
+    fn name(&self) -> &str {
+        "LogTableExec"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn properties(&self) -> &PlanProperties {
+        &self.plan_properties
+    }
+
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        Ok(self)
+    }
+
+    fn execute(
+        &self,
+        _partition: usize,
+        _context: Arc<datafusion::execution::TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
+        // Get field types in the same order as field_names, defaulting to String
+        let default_string = FieldType::String;
+        let field_types: Vec<&FieldType> = self
+            .provider
+            .scanner
+            .field_names
+            .iter()
+            .map(|name| {
+                self.provider
+                    .scanner
+                    .type_hints
+                    .get(name)
+                    .unwrap_or(&default_string)
+            })
+            .collect();
+        let mut fields_builder = FieldsBuilder::new(&field_types);
+
+        let file = File::open(&self.provider.file_path).unwrap();
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line?;
+            let fields = self.provider.scanner.scan(&line);
+
+            if let Some(fields) = fields {
+                fields_builder.push(&field_types, &fields);
+            }
+        }
+
+        let columns = fields_builder.finish();
+        let partitions = RecordBatch::try_new(self.projected_schema.clone(), columns).unwrap();
+
+        Ok(Box::pin(MemoryStream::try_new(
+            vec![partitions],
+            self.schema(),
+            None,
+        )?))
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.projected_schema.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::datafusion::LogTableProvider;
+    use crate::scanner::Scanner;
+    use datafusion::arrow::datatypes::DataType;
+    use datafusion::prelude::SessionContext;
+
+    #[tokio::test]
+    async fn test_log_table_provider() {
+        let ctx = SessionContext::new();
+
+        let pattern = r"^\[(?P<time>\w{3} \w{3} \d{1,2} \d{2}:\d{2}:\d{2} \d{4})\] \[(?P<level>[^\]]+)\] (?P<message>.*)$";
+        let scanner = Scanner::new(pattern.to_string());
+        let log_table = LogTableProvider {
+            scanner,
+            file_path: String::from("loghub/Apache/Apache_2k.log"),
+        };
+
+        let _ = ctx.register_table("log", Arc::new(log_table));
+        let df = ctx.sql("SELECT * FROM log").await.unwrap();
+        let _ = df.show_limit(10).await;
+    }
+
+    #[tokio::test]
+    async fn test_log_table_provider_with_macros() {
+        let ctx = SessionContext::new();
+
+        let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
+        let scanner = Scanner::new(pattern.to_string());
+        let log_table = LogTableProvider {
+            scanner,
+            file_path: String::from("loghub/Apache/Apache_2k.log"),
+        };
+
+        let _ = ctx.register_table("log_mac", Arc::new(log_table));
+        let df = ctx
+            .sql("SELECT time, level, message FROM log_mac LIMIT 5")
+            .await
+            .unwrap();
+        let _ = df.show_limit(5).await;
+    }
+
+    #[tokio::test]
+    async fn test_log_table_provider_with_int_fields() {
+        let ctx = SessionContext::new();
+
+        // Pattern for jk2_init() messages: "jk2_init() Found child 6725 in scoreboard slot 10"
+        let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] jk2_init\(\) Found child {{child_pid:number}} in scoreboard slot {{slot:number}}$"#;
+        let scanner = Scanner::new(pattern.to_string());
+        let log_table = LogTableProvider {
+            scanner,
+            file_path: String::from("loghub/Apache/Apache_2k.log"),
+        };
+
+        let _ = ctx.register_table("log_int", Arc::new(log_table));
+
+        // Test that child_pid and slot are Int32 columns
+        let df = ctx
+            .sql("SELECT time, level, child_pid, slot FROM log_int LIMIT 10")
+            .await
+            .unwrap();
+
+        let results = df.collect().await.unwrap();
+        assert!(
+            !results.is_empty(),
+            "Should have matched some jk2_init() lines"
+        );
+
+        // Verify schema has Int32 columns
+        let schema = results[0].schema();
+        let child_pid_field = schema.field_with_name("child_pid").unwrap();
+        let slot_field = schema.field_with_name("slot").unwrap();
+        assert_eq!(child_pid_field.data_type(), &DataType::Int32);
+        assert_eq!(slot_field.data_type(), &DataType::Int32);
+    }
+}

@@ -3,8 +3,8 @@ use datafusion::prelude::SessionContext;
 use std::sync::Arc;
 use std::time::Instant;
 
-use lflog::profile::Scanner;
-use lflog::table_provider::LogTableProvider;
+use lflog::LogTableProvider;
+use lflog::Scanner;
 
 #[tokio::main]
 async fn main() -> Result<()> {
