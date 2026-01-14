@@ -66,6 +66,26 @@ impl Scanner {
             .collect();
         Some(out)
     }
+
+    /// Scan a log line and return captured values for specific fields only.
+    ///
+    /// Unlike [`scan`], this method returns only the values for the specified
+    /// `field_names` in the order they are provided. This is useful for query
+    /// projections where only a subset of fields are needed.
+    ///
+    /// Returns `None` if the line doesn't match the pattern.
+    pub fn scan_with(&self, line: &str, field_names: &[&str]) -> Option<Vec<String>> {
+        let caps = self.regex.captures(line)?;
+        let out: Vec<String> = field_names
+            .iter()
+            .map(|n| {
+                caps.name(n)
+                    .map(|m| m.as_str().to_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+        Some(out)
+    }
 }
 
 #[cfg(test)]

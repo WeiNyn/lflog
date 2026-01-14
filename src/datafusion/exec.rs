@@ -41,7 +41,7 @@ impl LogTableExec {
         let plan_properties = PlanProperties::new(
             EquivalenceProperties::new(projected_schema.clone()),
             Partitioning::UnknownPartitioning(1),
-            EmissionType::Final,
+            EmissionType::Incremental,
             Boundedness::Bounded,
         );
 
@@ -94,19 +94,23 @@ impl ExecutionPlan for LogTableExec {
     ) -> Result<SendableRecordBatchStream> {
         // Get field types in the same order as field_names, defaulting to String
         let default_string = FieldType::String;
-        let field_types: Vec<&FieldType> = self
-            .provider
-            .scanner
-            .field_names
+
+        let projected_fields = self.projected_schema.fields().iter().collect::<Vec<_>>();
+        let field_names: Vec<&str> = projected_fields
             .iter()
-            .map(|name| {
+            .map(|f| f.name().as_str())
+            .collect::<Vec<_>>();
+        let field_types: Vec<&FieldType> = projected_fields
+            .iter()
+            .map(|f| {
                 self.provider
                     .scanner
                     .type_hints
-                    .get(name)
+                    .get(f.name())
                     .unwrap_or(&default_string)
             })
             .collect();
+
         let mut fields_builder = FieldsBuilder::new(&field_types);
 
         let file = File::open(&self.provider.file_path).unwrap();
@@ -114,7 +118,7 @@ impl ExecutionPlan for LogTableExec {
 
         for line in reader.lines() {
             let line = line?;
-            let fields = self.provider.scanner.scan(&line);
+            let fields = self.provider.scanner.scan_with(&line, &field_names);
 
             if let Some(fields) = fields {
                 fields_builder.push(&field_types, &fields);
@@ -211,5 +215,78 @@ mod tests {
         let slot_field = schema.field_with_name("slot").unwrap();
         assert_eq!(child_pid_field.data_type(), &DataType::Int32);
         assert_eq!(slot_field.data_type(), &DataType::Int32);
+    }
+
+    /// Tests that column projection works correctly when only a subset of columns is selected.
+    ///
+    /// This test verifies the fix for the projection bug where selecting fewer columns than
+    /// defined in the pattern caused a schema mismatch. The fix ensures that:
+    /// 1. Only the projected columns are scanned and returned
+    /// 2. The schema matches the selected columns
+    /// 3. The record batch has the correct number of columns
+    #[tokio::test]
+    async fn test_log_table_projection() {
+        let ctx = SessionContext::new();
+
+        // Pattern with 3 fields: time, level, message
+        let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
+        let scanner = Scanner::new(pattern.to_string());
+
+        // Verify scanner has 3 fields
+        assert_eq!(scanner.field_names.len(), 3);
+        assert_eq!(scanner.field_names, vec!["time", "level", "message"]);
+
+        let log_table = LogTableProvider {
+            scanner,
+            file_path: String::from("loghub/Apache/Apache_2k.log"),
+        };
+
+        let _ = ctx.register_table("log_proj", Arc::new(log_table));
+
+        // Test 1: Select only 2 columns out of 3
+        let df = ctx
+            .sql("SELECT time, level FROM log_proj LIMIT 5")
+            .await
+            .unwrap();
+        let results = df.collect().await.unwrap();
+
+        assert!(!results.is_empty(), "Should have results");
+        let schema = results[0].schema();
+        assert_eq!(
+            schema.fields().len(),
+            2,
+            "Should have exactly 2 columns in projection"
+        );
+        assert_eq!(schema.field(0).name(), "time");
+        assert_eq!(schema.field(1).name(), "level");
+
+        // Test 2: Select only 1 column
+        let df = ctx
+            .sql("SELECT message FROM log_proj LIMIT 5")
+            .await
+            .unwrap();
+        let results = df.collect().await.unwrap();
+
+        assert!(!results.is_empty(), "Should have results");
+        let schema = results[0].schema();
+        assert_eq!(
+            schema.fields().len(),
+            1,
+            "Should have exactly 1 column in projection"
+        );
+        assert_eq!(schema.field(0).name(), "message");
+
+        // Test 3: Select columns in different order than pattern definition
+        let df = ctx
+            .sql("SELECT message, time FROM log_proj LIMIT 5")
+            .await
+            .unwrap();
+        let results = df.collect().await.unwrap();
+
+        assert!(!results.is_empty(), "Should have results");
+        let schema = results[0].schema();
+        assert_eq!(schema.fields().len(), 2);
+        assert_eq!(schema.field(0).name(), "message");
+        assert_eq!(schema.field(1).name(), "time");
     }
 }
