@@ -2107,12 +2107,13 @@ dependencies = [
  "dirs",
  "env_logger",
  "log",
- "memap2",
+ "memmap2",
  "rayon",
  "regex",
  "rustyline",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",
@@ -2213,16 +2214,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "memap2"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c052a514edd209059b24755d7a84a97481c9665b40b7b8d148092b412988576"
-
-[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+
+[[package]]
+name = "memmap2"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "744133e4a0e0a658e1374cf3bf8e415c4052a15a111acd372764c55b4177d490"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "miniz_oxide"

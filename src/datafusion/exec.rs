@@ -1,5 +1,6 @@
 //! LogTableExec execution plan implementation.
 
+use anyhow::Error;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::SendableRecordBatchStream;
@@ -8,10 +9,13 @@ use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::{DisplayAs, ExecutionPlan, PlanProperties};
 use datafusion_common::Result;
+use memmap2::Mmap;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::sync::Arc;
 
+use crate::Scanner;
 use crate::datafusion::builder::FieldsBuilder;
 use crate::datafusion::provider::LogTableProvider;
 use crate::types::FieldType;
@@ -111,25 +115,18 @@ impl ExecutionPlan for LogTableExec {
             })
             .collect();
 
-        let mut fields_builder = FieldsBuilder::new(&field_types);
-
-        let file = File::open(&self.provider.file_path).unwrap();
-        let reader = BufReader::new(file);
-
-        for line in reader.lines() {
-            let line = line?;
-            let fields = self.provider.scanner.scan_with(&line, &field_names);
-
-            if let Some(fields) = fields {
-                fields_builder.push(&field_types, &fields);
-            }
-        }
-
-        let columns = fields_builder.finish();
-        let partitions = RecordBatch::try_new(self.projected_schema.clone(), columns).unwrap();
+        let partitions = parse(
+            &self.provider.file_path,
+            &self.provider.scanner,
+            &field_names,
+            &field_types,
+            self.projected_schema.clone(),
+            None, // Use default thread count
+        )
+        .map_err(|e| datafusion_common::DataFusionError::External(e.into()))?;
 
         Ok(Box::pin(MemoryStream::try_new(
-            vec![partitions],
+            partitions,
             self.schema(),
             None,
         )?))
@@ -138,6 +135,80 @@ impl ExecutionPlan for LogTableExec {
     fn schema(&self) -> SchemaRef {
         self.projected_schema.clone()
     }
+}
+
+fn parse(
+    file: &str,
+    scanner: &Scanner,
+    field_names: &[&str],
+    field_types: &[&FieldType],
+    schema: SchemaRef,
+    thread_count: Option<usize>,
+) -> Result<Vec<RecordBatch>, Error> {
+    let file = File::open(file)?;
+
+    let mmap = unsafe { Mmap::map(&file)? };
+
+    let chunk_count = thread_count
+        .unwrap_or_else(rayon::current_num_threads)
+        .clamp(1, rayon::current_num_threads());
+    let total_size = mmap.len();
+    let chunk_size = total_size / chunk_count;
+
+    let partitions: Result<Vec<RecordBatch>, Error> = (0..chunk_count)
+        .into_par_iter()
+        .map(|i| {
+            let mut fields_builder = FieldsBuilder::new(field_types);
+
+            let start = i * chunk_size;
+
+            // Find actual chunk boundaries at newline positions
+            let actual_start = if i == 0 {
+                0
+            } else {
+                // Start after the newline that ends the previous chunk's last line
+                find_next_newline(&mmap, start, total_size).unwrap_or(total_size)
+            };
+
+            let actual_end = if i == chunk_count - 1 {
+                // Last chunk goes to the end of the file
+                total_size
+            } else {
+                // Find the newline at or after the nominal end position
+                let nominal_end = (i + 1) * chunk_size;
+                find_next_newline(&mmap, nominal_end, total_size).unwrap_or(total_size)
+            };
+
+            if actual_start >= actual_end {
+                // Empty chunk, return empty batch
+                let columns = fields_builder.finish();
+                return RecordBatch::try_new(schema.clone(), columns)
+                    .map_err(|e| Error::msg(e.to_string()));
+            }
+
+            let section = &mmap[actual_start..actual_end];
+
+            section.lines().map_while(Result::ok).for_each(|line| {
+                let values = scanner.scan_with(&line, field_names);
+                if let Some(values) = values {
+                    fields_builder.push(field_types, &values);
+                };
+            });
+
+            let columns = fields_builder.finish();
+            RecordBatch::try_new(schema.clone(), columns).map_err(|e| Error::msg(e.to_string()))
+        })
+        .collect();
+
+    partitions
+}
+
+/// Helper to find the index of the next newline character
+fn find_next_newline(mmap: &[u8], start: usize, end: usize) -> Option<usize> {
+    mmap[start..end]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|pos| start + pos + 1) // +1 to include the newline itself
 }
 
 #[cfg(test)]
@@ -288,5 +359,60 @@ mod tests {
         assert_eq!(schema.fields().len(), 2);
         assert_eq!(schema.field(0).name(), "message");
         assert_eq!(schema.field(1).name(), "time");
+    }
+
+    /// Tests that parsing works correctly with very small files (fewer lines than thread count).
+    /// This verifies that empty chunks are handled gracefully.
+    #[tokio::test]
+    async fn test_log_table_small_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create a small temp file with just 3 lines
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "[Sun Dec 04 04:47:44 2005] [notice] Line 1").unwrap();
+        writeln!(temp_file, "[Sun Dec 04 04:47:45 2005] [error] Line 2").unwrap();
+        writeln!(temp_file, "[Sun Dec 04 04:47:46 2005] [notice] Line 3").unwrap();
+        temp_file.flush().unwrap();
+
+        let ctx = SessionContext::new();
+
+        let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
+        let scanner = Scanner::new(pattern.to_string());
+        let log_table = LogTableProvider {
+            scanner,
+            file_path: temp_file.path().to_string_lossy().to_string(),
+        };
+
+        let _ = ctx.register_table("log_small", Arc::new(log_table));
+        let df = ctx
+            .sql("SELECT time, level, message FROM log_small")
+            .await
+            .unwrap();
+        let results = df.collect().await.unwrap();
+
+        // Count total rows across all batches
+        let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 3, "Should have exactly 3 rows");
+    }
+
+    /// Tests that proper error handling occurs when the log file doesn't exist.
+    #[tokio::test]
+    async fn test_log_table_file_not_found() {
+        let ctx = SessionContext::new();
+
+        let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
+        let scanner = Scanner::new(pattern.to_string());
+        let log_table = LogTableProvider {
+            scanner,
+            file_path: String::from("/nonexistent/path/to/file.log"),
+        };
+
+        let _ = ctx.register_table("log_missing", Arc::new(log_table));
+        let df = ctx.sql("SELECT * FROM log_missing").await.unwrap();
+        let result = df.collect().await;
+
+        // Should return an error, not panic
+        assert!(result.is_err(), "Should return error for missing file");
     }
 }
