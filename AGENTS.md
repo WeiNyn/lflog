@@ -33,7 +33,7 @@ cargo test --bin lf_run        # Run binary tests only
 
 **Run single test** (most common pattern):
 ```bash
-cargo test test_expand_shorthand_number
+cargo test test_scanner_integration
 cargo test test_log_table_provider
 ```
 
@@ -43,16 +43,18 @@ cargo test test_log_table_provider
 
 Organize: std/core → external crates → internal modules (`crate::`)
 ```rust
-use std::collections::HashMap;
-use anyhow::{Result, bail};
 use regex::Regex;
-use crate::profile::Scanner;
+use std::collections::HashMap;
+use async_trait::async_trait;
+use datafusion::arrow::datatypes::DataType;
+use crate::scanner::Scanner;
+use crate::types::FieldType;
 ```
 
 ### Naming Conventions
 
 - **Structs/Enums/Traits**: PascalCase (`LogTableProvider`, `FieldType`)
-- **Functions/Methods**: snake_case (`expand_macros`, `scan`, `create_physical_plan`)
+- **Functions/Methods**: snake_case (`scan`, `create_physical_plan`, `expand_macros`)
 - **Constants**: SCREAMING_SNAKE_CASE
 - **Fields**: snake_case (`field_name`, `file_path`)
 - **Modules**: snake_case
@@ -60,10 +62,10 @@ use crate::profile::Scanner;
 
 ### Types & Errors
 
-- Use `anyhow::Result<T>` for error propagation
+- Use `anyhow::Result<T>` or `datafusion::common::Result<T>` for error propagation
 - Use `Option<T>` for nullable values
 - Use `bail!("error message")` for early returns with errors
-- Use `anyhow!` macro for wrapping errors with context
+- Use `?` operator for propagating errors
 
 ```rust
 use anyhow::{Result, bail};
@@ -71,82 +73,65 @@ fn parse_config(path: &str) -> Result<Config> {
     if !path.ends_with(".yaml") {
         bail!("config file must be .yaml");
     }
+    Ok(Config {})
 }
 ```
 
 ### Async Code
 
+- Use `#[async_trait]` for trait implementations
 - Use `#[tokio::test]` for async test functions
 - Use `async fn` for async functions
 - Use `await?` for propagating async errors
 
 ```rust
-#[tokio::test]
-async fn test_async_function() {
-    let result = async_function().await.unwrap();
+#[async_trait]
+impl TableProvider for LogTableProvider {
+    async fn scan(&self, _state: &dyn Session, ...) -> Result<Arc<dyn ExecutionPlan>> {
+        self.create_physical_plan(projection, self.schema())
+    }
 }
-async fn create_physical_plan(&self) -> Result<Arc<dyn ExecutionPlan>> {}
 ```
 
 ### Structs & Derives
 
 Common derives: `Debug, Clone, PartialEq, Eq, Serialize, Deserialize`
-
 ```rust
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MyStruct { pub field: String }
+#[derive(Debug, Clone)]
+pub struct Scanner {
+    regex: Regex,
+    pub field_names: Vec<String>,
+}
 ```
 
-### Functions
+### Documentation
 
-- Prefer returning `Result<T>` over panicking
-- Use `?` operator for error propagation
-- Keep functions focused (< 50 lines preferred)
-- Use descriptive names indicating the action
+- Use `//!` for module-level documentation at top of files
+- Use `///` for public API documentation on items
+```rust
+//! Log line scanner using compiled regex patterns.
+
+/// Scans log lines using a compiled regex pattern with named capture groups.
+pub struct Scanner { }
+```
 
 ### Tests
 
 - Place tests in `#[cfg(test)]` modules at bottom of files
 - Use `#[test]` for sync tests, `#[tokio::test]` for async tests
 - Prefix test functions with `test_`
-- Use descriptive test names
-
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn test_function_name() {}
-    #[tokio::test]
-    async fn test_async_function() {}
+    fn test_scanner_integration() { }
 }
 ```
 
-### Documentation
-
-Use `///` for public API documentation
-```rust
-/// Creates a new scanner from a regex pattern.
-pub fn new(pattern: String) -> Self {}
-```
-
-### Constants & Magic Numbers
-
-Avoid magic numbers; define constants
-```rust
-const DEFAULT_TIMEOUT_MS: u64 = 5000;
-const MAX_RETRIES: usize = 3;
-```
-
-### Error Messages
-
-Write clear, actionable error messages with context
-Good: `bail!("config file not found: {}", path)`
-Bad: `bail!("error at line 42")`
-
 ### File Organization
 
-- `src/lib.rs`: Module exports
+- `src/lib.rs`: Module exports with re-exports for convenience
 - `src/bin/`: Binary entry points
 - One logical module per file when possible
 - Tests co-located with implementation
@@ -162,7 +147,6 @@ Bad: `bail!("error at line 42")`
 - Build and test before committing: `cargo build && cargo test`
 - Run clippy: `cargo clippy -- -D warnings`
 - Keep commits focused and atomic
-- Commit message format: `verb(description): brief description`
 
 ## Dependencies
 
@@ -173,12 +157,14 @@ Key external crates (verify before adding):
 - `datafusion` - SQL query engine
 - `regex` - Pattern matching
 - `rayon` - Parallel processing
+- `async-trait` - Async trait support
+- `memmap2` - Memory mapped files
 
 Check `Cargo.toml` for current dependencies and versions before adding new ones.
 
 ## Notes
 
 - Rust edition: 2024
-- Primary binary: `src/bin/lf_run.rs`
+- Primary binaries: `src/bin/lflog.rs`, `src/bin/lf_run.rs`
 - Log data for testing: `loghub/` directory
 - No existing rustfmt.toml or clippy.toml - use default tooling

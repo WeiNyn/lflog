@@ -142,6 +142,7 @@ pub struct CustomMacro {
 #[derive(Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
+    #[serde(default)]
     pub custom_macros: Vec<CustomMacro>,
     pub pattern: String,
     pub description: Option<String>,
@@ -149,6 +150,7 @@ pub struct Profile {
 
 #[derive(Serialize, Deserialize)]
 pub struct Profiles {
+    #[serde(default)]
     pub custom_macros: Vec<CustomMacro>,
     pub profiles: Vec<Profile>,
 }
