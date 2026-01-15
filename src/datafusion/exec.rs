@@ -45,7 +45,7 @@ impl LogTableExec {
         let plan_properties = PlanProperties::new(
             EquivalenceProperties::new(projected_schema.clone()),
             Partitioning::UnknownPartitioning(1),
-            EmissionType::Incremental,
+            EmissionType::Final,
             Boundedness::Bounded,
         );
 
@@ -148,6 +148,13 @@ fn parse(
     let file = File::open(file)?;
 
     let mmap = unsafe { Mmap::map(&file)? };
+
+    // If thread_count is not provided, use LFLOGTHREADS environment variable
+    let thread_count = thread_count.or_else(|| {
+        std::env::var("LFLOGTHREADS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    });
 
     let chunk_count = thread_count
         .unwrap_or_else(rayon::current_num_threads)
