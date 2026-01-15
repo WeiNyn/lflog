@@ -51,6 +51,22 @@ lflog server.log --pattern '{{ts:datetime}} [{{level:var_name}}] {{msg:any}}'
 > .exit
 ```
 
+## Demos (Loghub)
+
+`lflog` includes a comprehensive set of demos using the [Loghub](https://github.com/logpai/loghub) dataset collection. These demos showcase how to query 16 different types of system logs (Android, Apache, Hadoop, HDFS, Linux, Spark, etc.).
+
+To run a demo:
+
+```bash
+# 1. Go to the demo scripts directory
+cd examples/loghub_demos/scripts
+
+# 2. Run the demo for a specific dataset (e.g., Apache)
+./run_demo.sh apache
+```
+
+See [examples/loghub_demos/README.md](examples/loghub_demos/README.md) for the full list of available datasets and more details.
+
 ## Config File
 
 Create `~/.config/lflog/config.toml`:
