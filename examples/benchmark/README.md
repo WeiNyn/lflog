@@ -37,6 +37,19 @@ The benchmark uses a generated 100MB Apache log file (approx 1.2 million lines).
 | gawk | ~1.80s | ~1.70s |
 | awk | ~1.75s | ~1.60s |
 
+### Parallel Scaling Benchmark (10M lines)
+
+Tested with `LFLOGTHREADS` environment variable to control parallelism.
+
+| Threads | Task 1: Filter | Task 2: Aggregate | Speedup vs 2 Threads |
+|---------|----------------|-------------------|----------------------|
+| 2       | ~2.42s         | ~3.33s            | 1.0x                 |
+| **4**   | **~1.72s**     | **~2.24s**        | **1.4x - 1.5x**      |
+| 8       | ~1.76s         | ~2.31s            | 1.4x                 |
+| 16      | ~2.18s         | ~3.05s            | 1.1x                 |
+
+*Note: Results suggest optimal performance at 4 threads on this test machine, likely matching physical core count. Overhead increases beyond that.*
+
 ### Analysis
 
 - **Performance**: 
