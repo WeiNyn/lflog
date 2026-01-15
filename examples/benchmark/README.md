@@ -19,18 +19,31 @@ The benchmark uses a generated 100MB Apache log file (approx 1.2 million lines).
 
 ## Results Summary
 
-Tested on a 100MB log file. `lflog` uses regex parsing with DataFusion's parallel execution engine. `awk`/`mawk` use string splitting (space delimiter).
+### Standard Benchmark (100MB)
 
-| Tool | Task 1: Filter (Count Errors) | Task 2: Aggregate (Group By) | Notes |
-|------|-------------------------------|------------------------------|-------|
-| **lflog** | **~0.16s** | **~0.17s** | **Regex parsing** + SQL engine |
-| mawk | ~0.20s | ~0.20s | String split, optimized bytecode |
-| gawk | ~0.22s | ~0.20s | String split, standard GNU awk |
-| awk | ~0.22s | ~0.20s | Standard awk |
+| Tool | Task 1: Filter (Count Errors) | Task 2: Aggregate (Group By) |
+|------|-------------------------------|------------------------------|
+| **lflog** | **~0.16s** | **~0.17s** |
+| mawk | ~0.20s | ~0.20s |
+| gawk | ~0.22s | ~0.20s |
+| awk | ~0.22s | ~0.20s |
+
+### XXL Benchmark (10M lines, ~800MB)
+
+| Tool | Task 1: Filter (Count Errors) | Task 2: Aggregate (Group By) |
+|------|-------------------------------|------------------------------|
+| **lflog** | **~2.30s** | **~3.00s** |
+| mawk | ~2.00s | ~2.10s |
+| gawk | ~1.80s | ~1.70s |
+| awk | ~1.75s | ~1.60s |
 
 ### Analysis
 
-- **Performance**: `lflog` is competitive with `mawk` (the fastest awk variant) and often faster on multi-core systems due to parallel processing.
+- **Performance**: 
+    - On smaller files (100MB), `lflog` overhead is negligible and parallelism wins (faster than awk).
+    - On larger files (800MB), `lflog` is ~30-50% slower than `awk`. This is a trade-off: `lflog` parses with **full Regex** (handling quotes, brackets correctly) while `awk` just splits by space.
+    - `lflog` achieves ~350 MB/s regex parsing throughput.
+
 - **Robustness**: `lflog` correctly handles complex log formats (quoted strings, brackets) using regex profiles, whereas `awk`'s simple whitespace splitting fails on complex formats (e.g., user agents with spaces).
 - **Usability**: `lflog` allows standard SQL queries (`GROUP BY`, `ORDER BY`), which are much more verbose to implement in `awk`.
 
