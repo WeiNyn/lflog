@@ -13,6 +13,8 @@ pub struct Scanner {
     regex: Regex,
     /// Ordered list of field names extracted from the pattern.
     pub field_names: Vec<String>,
+    /// Map of field names to their corresponding capture group indices.
+    pub indices_map: HashMap<String, usize>,
     /// Type hints for fields, used for schema generation.
     pub type_hints: HashMap<String, FieldType>,
 }
@@ -34,6 +36,12 @@ impl Scanner {
             expand_macros(&pattern, custom_macros).unwrap();
         let regex = Regex::new(&expanded).unwrap();
 
+        let indices_map = regex
+            .capture_names()
+            .enumerate()
+            .filter_map(|(i, name_opt)| name_opt.map(|name| (name.to_string(), i)))
+            .collect::<HashMap<String, usize>>();
+
         // If no macros were found, extract field names from regex named capture groups
         if field_names.is_empty() {
             field_names = regex
@@ -45,8 +53,47 @@ impl Scanner {
 
         Self {
             regex,
+            indices_map,
             field_names,
             type_hints,
+        }
+    }
+
+    /// Prepare capture indices for a list of fields.
+    ///
+    /// This resolves the mapping from field names to regex capture group indices once,
+    /// allowing for faster lookups during scanning.
+    pub fn prepare_indices(&self, field_names: &[&str]) -> Vec<usize> {
+        let mut indices = Vec::with_capacity(field_names.len());
+        for name in field_names {
+            if let Some(index) = self.indices_map.get(*name) {
+                indices.push(*index);
+            }
+        }
+        indices
+    }
+
+    /// Scan a log line using pre-calculated indices and populate a buffer with slices.
+    ///
+    /// This method avoids String allocations by returning slices of the input line (`&str`).
+    /// It appends results to the provided `out` buffer, which should be reused across calls
+    /// to minimize allocation overhead.
+    ///
+    /// Returns `true` if the line matches the pattern, `false` otherwise.
+    pub fn scan_direct<'a>(
+        &self,
+        line: &'a str,
+        field_indices: &[usize],
+        out: &mut Vec<&'a str>,
+    ) -> bool {
+        if let Some(caps) = self.regex.captures(line) {
+            out.clear();
+            for &index in field_indices {
+                out.push(caps.get(index).map(|m| m.as_str()).unwrap_or_default());
+            }
+            true
+        } else {
+            false
         }
     }
 
@@ -55,6 +102,7 @@ impl Scanner {
     /// Returns `None` if the line doesn't match the pattern.
     pub fn scan(&self, line: &str) -> Option<Vec<String>> {
         let caps = self.regex.captures(line)?;
+
         let out: Vec<String> = self
             .field_names
             .iter()

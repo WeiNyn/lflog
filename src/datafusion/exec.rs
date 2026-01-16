@@ -12,7 +12,6 @@ use datafusion_common::Result;
 use memmap2::Mmap;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::fs::File;
-use std::io::BufRead;
 use std::sync::Arc;
 
 use crate::Scanner;
@@ -194,13 +193,17 @@ fn parse(
             }
 
             let section = &mmap[actual_start..actual_end];
+            let section_str =
+                std::str::from_utf8(section).map_err(|e| Error::msg(e.to_string()))?;
 
-            section.lines().map_while(Result::ok).for_each(|line| {
-                let values = scanner.scan_with(&line, field_names);
-                if let Some(values) = values {
+            let field_indices = scanner.prepare_indices(field_names);
+            let mut values = Vec::with_capacity(field_indices.len());
+
+            for line in section_str.lines() {
+                if scanner.scan_direct(line, &field_indices, &mut values) {
                     fields_builder.push(field_types, &values);
-                };
-            });
+                }
+            }
 
             let columns = fields_builder.finish();
             RecordBatch::try_new(schema.clone(), columns).map_err(|e| Error::msg(e.to_string()))

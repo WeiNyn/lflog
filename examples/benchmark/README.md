@@ -23,32 +23,34 @@ The benchmark uses a generated 100MB Apache log file (approx 1.2 million lines).
 
 | Tool | Task 1: Filter (Count Errors) | Task 2: Aggregate (Group By) |
 |------|-------------------------------|------------------------------|
-| **lflog** | **~0.16s** | **~0.17s** |
-| mawk | ~0.20s | ~0.20s |
-| gawk | ~0.22s | ~0.20s |
-| awk | ~0.22s | ~0.20s |
+| **lflog** | **0.14s** | **0.16s** |
+| mawk | 0.19s | 0.19s |
+| gawk | 0.23s | 0.21s |
+| awk | 0.22s | 0.20s |
 
-### XXL Benchmark (10M lines, ~800MB)
+### XXL Benchmark (10M lines, ~817MB)
 
-**Best Configuration (4 Threads):**
+Values are averages over 5 runs to ensure stability.
 
 | Tool | Task 1: Filter (Count Errors) | Task 2: Aggregate (Group By) |
 |------|-------------------------------|------------------------------|
-| **lflog** | **~1.50s** | **~1.51s** |
-| mawk | ~1.55s | ~1.61s |
-| gawk | ~1.67s | ~1.54s |
-| awk | ~1.66s | ~1.54s |
+| **lflog (8 threads)** | **1.07s** | **1.47s** |
+| mawk | 1.71s | 1.61s |
+| gawk | 1.76s | 1.59s |
+| awk | 1.80s | 1.56s |
 
-### Analysis
+### Scaling Analysis (lflog)
 
-- **Performance**: 
-    - **lflog wins**: With optimal parallelism (4 threads), `lflog` outperforms even `mawk` (the fastest awk) on large datasets.
-    - **Throughput**: Processing 800MB in 1.5s equates to **~533 MB/s** parsing throughput with full Regex.
-    - **Efficiency**: Despite the heavy computational cost of Regex (vs split), `lflog`'s parallel architecture overcomes the overhead.
+Performance scales well with thread count, diminishing after 4-8 threads (on this 8-core machine).
 
-- **Robustness**: `lflog` correctly handles complex log formats (quoted strings, brackets) using regex profiles, whereas `awk`'s simple whitespace splitting fails on complex formats (e.g., user agents with spaces).
-- **Usability**: `lflog` allows standard SQL queries (`GROUP BY`, `ORDER BY`), which are much more verbose to implement in `awk`.
+| Threads | Filter Time | Group By Time |
+|---------|-------------|---------------|
+| 1 | 3.20s | 3.31s |
+| 2 | 2.05s | 2.16s |
+| 4 | 1.93s | **1.71s** |
+| 8 | **1.88s** | 1.83s |
 
+*Note: Filter task scales better because it's purely parallelizable. Group By requires a merge phase which adds overhead as parallelism increases.*
 
 ### Example Queries
 

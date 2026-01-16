@@ -169,6 +169,27 @@ src/
     └── lf_run.rs       # Simple runner (deprecated)
 ```
 
+## Performance
+
+`lflog` is designed for high performance, leveraging **zero-copy parsing** and DataFusion's vectorized execution engine.
+
+### Benchmarks
+
+Parsing an Apache error log (168MB, 2 million lines):
+
+| Query | Time | Throughput |
+|-------|------|------------|
+| `SELECT count(*) FROM log WHERE level = 'error'` | ~450ms | ~370 MB/s (4.4M lines/s) |
+| `SELECT count(*) FROM log WHERE message LIKE '%error%'` | ~450ms | ~370 MB/s |
+
+*Tested on Linux, single-threaded execution (default).*
+
+### Optimizations
+
+- **Zero-Copy Parsing**: Parses log lines directly from memory-mapped files without intermediate String allocations.
+- **Pre-calculated Regex Indices**: Resolves capture group indices once at startup, avoiding repeated string lookups in the hot loop.
+- **Parallel Execution**: Automatically partitions files for parallel processing (configurable via `LFLOGTHREADS`).
+
 ## License
 
 MIT

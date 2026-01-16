@@ -30,8 +30,9 @@ impl FieldsBuilder {
 
     /// Push a row of values into the builders.
     ///
+    /// Accepts string slices (`&str`) to avoid intermediate allocations.
     /// For Int and Float types, parsing errors result in null values.
-    pub fn push(&mut self, field_types: &[&FieldType], values: &[String]) {
+    pub fn push(&mut self, field_types: &[&FieldType], values: &[&str]) {
         for ((builder, field_type), value) in self.builders.iter_mut().zip(field_types).zip(values)
         {
             match field_type {
