@@ -78,6 +78,8 @@ GROUP BY level;
 | Joins | ✅ Supported | ❌ Not available | ✅ Supported |
 
 > **Run the comparison demo:** `./examples/duckdb_comparison.sh`
+>
+> **Run the complex analysis demo:** `./examples/complex_analysis_demo.sh` (showcases multi-source analysis, security log inspection, and advanced SQL queries)
 
 ## Installation
 

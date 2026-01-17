@@ -19,31 +19,31 @@ description = "IPv4 address"
 name = "hdfs"
 description = "HDFS log format"
 # Sample: 081109 203615 148 INFO dfs.DataNode$PacketResponder: PacketResponder 1 ...
-pattern = '{{timestamp:datetime("%y%m%d %H%M%S")}} {{pid:number}} {{level:var_name}} {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:datetime("%y%m%d %H%M%S")}} {{pid:number}} {{level:var_name}} {{component:string}}: {{message:any}}$'
 
 [[profiles]]
 name = "hadoop"
 description = "Hadoop MapReduce log format"
 # Sample: 2015-10-18 18:01:47,978 INFO [main] org.apache.hadoop.mapreduce.v2.app.MRAppMaster: ...
-pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S,%f")}} {{level:var_name}} \[{{thread:any}}\] {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S,%f")}} {{level:var_name}} \[{{thread:string}}\] {{component:string}}: {{message:any}}$'
 
 [[profiles]]
 name = "spark"
 description = "Spark log format"
 # Sample: 17/06/09 20:10:40 INFO executor.CoarseGrainedExecutorBackend: ...
-pattern = '{{timestamp:datetime("%y/%m/%d %H:%M:%S")}} {{level:var_name}} {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:datetime("%y/%m/%d %H:%M:%S")}} {{level:var_name}} {{component:string}}: {{message:any}}$'
 
 [[profiles]]
 name = "zookeeper"
 description = "Zookeeper log format"
 # Sample: 2015-07-29 17:41:44,747 - INFO  [QuorumPeer[myid=1]/0:0:0:0:0:0:0:0:2181:FastLeaderElection@774] - Notification time out: 3200
-pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S,%f")}} - {{level:var_name}}\s+\[{{component:any}}\] - {{message:any}}'
+pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S,%f")}} - {{level:var_name}}\s+\[{{component:string}}\] - {{message:any}}$'
 
 [[profiles]]
 name = "openstack"
 description = "OpenStack log format"
 # Sample: nova-api.log.1.2017-05-16_13:53:08 2017-05-16 00:00:00.008 25746 INFO nova.osapi_compute.wsgi.server ...
-pattern = '{{filename:string}} {{timestamp:datetime("%Y-%m-%d %H:%M:%S.%f")}} {{pid:number}} {{level:var_name}} {{component:any}} \[{{req_id:any}}\] {{message:any}}'
+pattern = '{{filename:string}} {{timestamp:datetime("%Y-%m-%d %H:%M:%S.%f")}} {{pid:number}} {{level:var_name}} {{component:string}} \[{{req_id:string}}\] {{message:any}}$'
 
 # ==========================================
 # Supercomputers
@@ -53,19 +53,19 @@ pattern = '{{filename:string}} {{timestamp:datetime("%Y-%m-%d %H:%M:%S.%f")}} {{
 name = "bgl"
 description = "Blue Gene/L supercomputer log"
 # Sample: - 1117838570 2005.06.03 R02-M1-N0-C:J12-U11 2005-06-03-15.42.50.675872 R02-M1-N0-C:J12-U11 RAS KERNEL INFO ...
-pattern = '{{alert_flag:any}} {{timestamp:number}} {{date:datetime("%Y.%m.%d")}} {{node:any}} {{detailed_time:any}} {{node_repeat:any}} {{component:any}} {{level:var_name}} {{message:any}}'
+pattern = '{{alert_flag:string}} {{timestamp:number}} {{date:datetime("%Y.%m.%d")}} {{node:string}} {{detailed_time:string}} {{node_repeat:string}} {{component:string}} {{level:var_name}} {{message:any}}$'
 
 [[profiles]]
 name = "hpc"
 description = "High Performance Cluster log"
 # Sample: 134681 node-246 unix.hw state_change.unavailable 1077804742 1 Component State Change: ...
-pattern = '{{log_id:number}} {{node:any}} {{component:any}} {{state:any}} {{timestamp:number}} {{flag:number}} {{message:any}}'
+pattern = '{{log_id:number}} {{node:string}} {{component:string}} {{state:string}} {{timestamp:number}} {{flag:number}} {{message:any}}$'
 
 [[profiles]]
 name = "thunderbird"
 description = "Thunderbird supercomputer log"
 # Sample: - 1131566461 2005.11.09 dn228 Nov 9 12:01:01 dn228/dn228 crond(pam_unix)[2915]: ...
-pattern = '{{alert_flag:any}} {{timestamp:number}} {{date:datetime("%Y.%m.%d")}} {{node:any}} {{message:any}}'
+pattern = '{{alert_flag:string}} {{timestamp:number}} {{date:datetime("%Y.%m.%d")}} {{node:string}} {{message:any}}$'
 
 # ==========================================
 # Operating Systems
@@ -75,19 +75,19 @@ pattern = '{{alert_flag:any}} {{timestamp:number}} {{date:datetime("%Y.%m.%d")}}
 name = "linux"
 description = "Linux system log"
 # Sample: Jun 14 15:16:01 combo sshd(pam_unix)[19939]: ...
-pattern = '{{timestamp:syslog_ts}} {{hostname:any}} {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:syslog_ts}} {{hostname:string}} {{component:string}}: {{message:any}}$'
 
 [[profiles]]
 name = "mac"
 description = "Mac OS log"
 # Sample: Jul  1 09:00:55 calvisitor-10-105-160-95 kernel[0]: ...
-pattern = '{{timestamp:syslog_ts}} {{hostname:any}} {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:syslog_ts}} {{hostname:string}} {{component:string}}: {{message:any}}$'
 
 [[profiles]]
 name = "windows"
 description = "Windows CBS/CSI log"
 # Sample: 2016-09-28 04:30:30, Info                  CBS    Loaded Servicing Stack ...
-pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S")}}, {{level:var_name}}\s+{{component:var_name}}\s+{{message:any}}'
+pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S")}}, {{level:var_name}}\s+{{component:var_name}}\s+{{message:any}}$'
 
 # ==========================================
 # Mobile Systems
@@ -97,13 +97,13 @@ pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S")}}, {{level:var_name}}\s+{{c
 name = "android"
 description = "Android logcat"
 # Sample: 03-17 16:13:38.811  1702  2395 D WindowManager: ...
-pattern = '{{timestamp:datetime("%m-%d %H:%M:%S.%f")}}\s+{{pid:number}}\s+{{tid:number}}\s+{{level:var_name}}\s+{{component:any}}: {{message:any}}'
+pattern = '{{timestamp:datetime("%m-%d %H:%M:%S.%f")}}\s+{{pid:number}}\s+{{tid:number}}\s+{{level:var_name}}\s+{{component:string}}: {{message:any}}$'
 
 [[profiles]]
 name = "healthapp"
 description = "HealthApp log"
 # Sample: 20171223-22:15:29:606|Step_LSC|30002312|onStandStepChanged 3579
-pattern = '{{timestamp:datetime("%Y%m%d-%H:%M:%S:%f")}}\|{{component:any}}\|{{pid:number}}\|{{message:any}}'
+pattern = '{{timestamp:datetime("%Y%m%d-%H:%M:%S:%f")}}\|{{component:string}}\|{{pid:number}}\|{{message:any}}$'
 
 # ==========================================
 # Server Applications
@@ -119,7 +119,7 @@ pattern = '^\[{{timestamp:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_nam
 name = "openssh"
 description = "OpenSSH server log"
 # Sample: Dec 10 06:55:46 LabSZ sshd[24200]: reverse mapping checking ...
-pattern = '{{timestamp:syslog_ts}} {{hostname:any}} {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:syslog_ts}} {{hostname:string}} {{component:string}}: {{message:any}}$'
 
 # ==========================================
 # Standalone Software
@@ -129,4 +129,4 @@ pattern = '{{timestamp:syslog_ts}} {{hostname:any}} {{component:any}}: {{message
 name = "proxifier"
 description = "Proxifier log"
 # Sample: [10.30 16:49:06] chrome.exe - proxy.cse.cuhk.edu.hk:5070 open through proxy ...
-pattern = '\[{{timestamp:datetime("%m.%d %H:%M:%S")}}\] {{program:any}} - {{message:any}}'
+pattern = '\[{{timestamp:datetime("%m.%d %H:%M:%S")}}\] {{program:string}} - {{message:any}}$'
