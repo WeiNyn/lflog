@@ -13,6 +13,72 @@ Query log files with SQL using DataFusion and regex pattern macros.
 - 📝 **Config Profiles** - Define reusable log profiles in TOML config files
 - 💻 **Interactive REPL** - Query logs interactively with command history
 
+## Why lflog?
+
+### Comparison: Count errors by log level
+
+<table>
+<tr>
+<th>Tool</th>
+<th>Command</th>
+</tr>
+<tr>
+<td><b>lflog</b></td>
+<td>
+
+```bash
+lflog access.log \
+  --pattern '^\[{{time:any}}\] \[{{level:var_name}}\] {{msg:any}}$' \
+  --query "SELECT level, COUNT(*) FROM log GROUP BY level"
+```
+
+</td>
+</tr>
+<tr>
+<td><b>awk</b></td>
+<td>
+
+```bash
+awk -F'[][]' '{print $4}' access.log | sort | uniq -c | sort -rn
+# Or with proper parsing:
+awk 'match($0, /\[[^\]]+\] \[([^\]]+)\]/, m) {count[m[1]]++} 
+     END {for (l in count) print l, count[l]}' access.log
+```
+
+</td>
+</tr>
+<tr>
+<td><b>DuckDB</b></td>
+<td>
+
+```sql
+SELECT 
+    regexp_extract(line, '\[[^\]]+\] \[([^\]]+)\]', 1) as level,
+    COUNT(*) as count
+FROM read_csv('access.log', columns={'line': 'VARCHAR'}, 
+              header=false, delim=E'\x1F')
+GROUP BY level;
+```
+
+</td>
+</tr>
+</table>
+
+### Key Advantages
+
+| Feature | lflog | awk/grep | DuckDB |
+|---------|-------|----------|--------|
+| Pattern syntax | `{{level:var_name}}` | Raw regex | Raw regex |
+| Named fields | ✅ Built-in | ❌ Manual indexing | ❌ `regexp_extract()` per field |
+| SQL queries | ✅ Full SQL | ❌ Not available | ✅ Full SQL |
+| Type inference | ✅ Automatic | ❌ All strings | ❌ Manual |
+| Multi-file glob | ✅ `'logs/*.log'` | ⚠️ Shell expansion | ✅ Supported |
+| Source tracking | ✅ `__FILE__` column | ❌ Manual | ❌ Manual |
+| Aggregations | ✅ SQL GROUP BY | ⚠️ Complex piping | ✅ SQL GROUP BY |
+| Joins | ✅ Supported | ❌ Not available | ✅ Supported |
+
+> **Run the comparison demo:** `./examples/duckdb_comparison.sh`
+
 ## Installation
 
 ```bash
