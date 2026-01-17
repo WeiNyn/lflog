@@ -42,6 +42,18 @@ struct Cli {
     /// SQL query to execute (omit for interactive mode).
     #[arg(short, long)]
     query: Option<String>,
+
+    /// Whether to add file path column (default: false).
+    #[arg(short = 'f', long, default_value = "false")]
+    add_file_path: bool,
+
+    /// Whether to add raw log line column (default: false).
+    #[arg(short = 'r', long, default_value = "false")]
+    add_raw: bool,
+
+    /// Number of threads to use for processing (default: 8).
+    #[arg(short, long, default_value = "8")]
+    num_threads: Option<u32>,
 }
 
 /// Resolve config file path from CLI, env var, or default.
@@ -161,6 +173,11 @@ async fn main() -> Result<()> {
     } else {
         options
     };
+
+    let options = options
+        .with_add_file_path(cli.add_file_path)
+        .with_add_raw(cli.add_raw)
+        .with_num_threads(cli.num_threads);
 
     // Register the log file
     lflog.register(options)?;

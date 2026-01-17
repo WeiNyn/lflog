@@ -21,6 +21,12 @@ pub struct QueryOptions {
     pub pattern_override: Option<String>,
     /// Table name for SQL queries (default: "log").
     pub table_name: String,
+    /// Add file path to the schema (default: false).
+    pub add_file_path: bool,
+    /// Add raw log line to the schema (default: false).
+    pub add_raw: bool,
+    /// Number of threads
+    pub num_threads: Option<usize>,
 }
 
 impl Default for QueryOptions {
@@ -30,6 +36,9 @@ impl Default for QueryOptions {
             profile_name: None,
             pattern_override: None,
             table_name: "log".to_string(),
+            add_file_path: false,
+            add_raw: false,
+            num_threads: None,
         }
     }
 }
@@ -58,6 +67,24 @@ impl QueryOptions {
     /// Set the table name.
     pub fn with_table_name(mut self, name: impl Into<String>) -> Self {
         self.table_name = name.into();
+        self
+    }
+
+    /// Set whether to add file path column.
+    pub fn with_add_file_path(mut self, add_file_path: bool) -> Self {
+        self.add_file_path = add_file_path;
+        self
+    }
+
+    /// Set whether to add raw log line column.
+    pub fn with_add_raw(mut self, add_raw: bool) -> Self {
+        self.add_raw = add_raw;
+        self
+    }
+
+    /// Set the number of threads to use for processing.
+    pub fn with_num_threads(mut self, num_threads: Option<u32>) -> Self {
+        self.num_threads = num_threads.map(|n| n as usize);
         self
     }
 }
@@ -136,7 +163,13 @@ impl LfLog {
         };
 
         // Create table provider and register it
-        let table = LogTableProvider::new(scanner, options.log_file);
+        let table = LogTableProvider::new(
+            scanner,
+            options.log_file,
+            options.add_file_path,
+            options.add_raw,
+            options.num_threads,
+        );
         self.ctx
             .register_table(&options.table_name, Arc::new(table))?;
 

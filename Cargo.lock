@@ -2106,6 +2106,7 @@ dependencies = [
  "datafusion-sql",
  "dirs",
  "env_logger",
+ "glob",
  "log",
  "memmap2",
  "rayon",

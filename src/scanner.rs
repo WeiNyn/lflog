@@ -63,14 +63,32 @@ impl Scanner {
     ///
     /// This resolves the mapping from field names to regex capture group indices once,
     /// allowing for faster lookups during scanning.
-    pub fn prepare_indices(&self, field_names: &[&str]) -> Vec<usize> {
-        let mut indices = Vec::with_capacity(field_names.len());
+    ///
+    /// Returns an error if a field name is not found in either the regex capture groups
+    /// or the additional columns.
+    pub fn prepare_indices(
+        &self,
+        field_names: &[&str],
+        additional_columns: &[&str],
+    ) -> Result<Vec<usize>, String> {
+        let capture_count = self.regex.captures_len();
+        let additional_indices_map = additional_columns
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (*name, capture_count + i))
+            .collect::<HashMap<&str, usize>>();
+
+        let mut indices = Vec::with_capacity(field_names.len() + additional_columns.len());
         for name in field_names {
             if let Some(index) = self.indices_map.get(*name) {
                 indices.push(*index);
+            } else if let Some(index) = additional_indices_map.get(*name) {
+                indices.push(*index);
+            } else {
+                return Err(format!("Field name not found: {}", name));
             }
         }
-        indices
+        Ok(indices)
     }
 
     /// Scan a log line using pre-calculated indices and populate a buffer with slices.
@@ -149,5 +167,60 @@ mod tests {
         assert_eq!(fields.len(), 3);
         assert_eq!(fields[0], "Sun Dec 04 04:47:44 2005");
         assert_eq!(fields[1], "notice");
+    }
+
+    #[test]
+    fn test_scanner_no_named_groups_panic() {
+        // Pattern with no named groups
+        let pattern = r"^\d+$";
+        let scanner = Scanner::new(pattern.to_string());
+
+        // Field names should be empty since there are no named groups
+        assert!(scanner.field_names.is_empty());
+
+        // This panicked with the old logic: 0 + 0 - 1 (underflow)
+        // New logic: captures_len() + 0
+        // NOTE: We must request "__FILE__" in the field list for it to be indexed
+        let indices = scanner
+            .prepare_indices(&["__FILE__"], &["__FILE__"])
+            .unwrap();
+
+        assert_eq!(indices.len(), 1);
+        // captures_len is 1 (group 0 is the whole match)
+        assert!(indices[0] >= 1);
+    }
+
+    #[test]
+    fn test_scanner_mixed_groups_indices() {
+        // Pattern: Unnamed group (\d+) then named group (?P<name>\w+)
+        // Captures: 0 (all), 1 (digits), 2 (name) -> captures_len = 3
+        let pattern = r"^(\d+) (?P<name>\w+)$";
+        let scanner = Scanner::new(pattern.to_string());
+
+        assert_eq!(scanner.field_names, vec!["name"]);
+
+        // We want 'name' and '__FILE__'
+        // NOTE: We must request both in the field list
+        let indices = scanner
+            .prepare_indices(&["name", "__FILE__"], &["__FILE__"])
+            .unwrap();
+
+        assert_eq!(indices.len(), 2);
+
+        // Index for 'name' should be 2
+        assert_eq!(indices[0], 2);
+
+        // Index for '__FILE__' should be >= 3 (captures_len)
+        // Old logic: 0 + 1 (field_names.len) - 1 = 0 (Collision with group 0!)
+        assert!(indices[1] >= 3);
+
+        // Verify scan_direct behavior
+        let line = "123 test";
+        let mut values = Vec::new();
+        let matched = scanner.scan_direct(line, &indices, &mut values);
+
+        assert!(matched);
+        assert_eq!(values[0], "test"); // name
+        assert_eq!(values[1], ""); // __FILE__ (should be empty/None from regex)
     }
 }

@@ -18,12 +18,27 @@ use crate::types::FieldType;
 pub struct LogTableProvider {
     pub scanner: Scanner,
     pub file_path: String,
+    pub add_file_path: bool,
+    pub add_raw: bool,
+    pub num_threads: Option<usize>,
 }
 
 impl LogTableProvider {
     /// Create a new LogTableProvider.
-    pub fn new(scanner: Scanner, file_path: String) -> Self {
-        Self { scanner, file_path }
+    pub fn new(
+        scanner: Scanner,
+        file_path: String,
+        add_file_path: bool,
+        add_raw: bool,
+        num_threads: Option<usize>,
+    ) -> Self {
+        Self {
+            scanner,
+            file_path,
+            add_file_path,
+            add_raw,
+            num_threads,
+        }
     }
 
     /// Create a physical execution plan with optional projections.
@@ -48,7 +63,7 @@ impl TableProvider for LogTableProvider {
 
     /// Generate schema dynamically from the scanner's field names and type hints.
     fn schema(&self) -> SchemaRef {
-        let fields: Vec<Field> = self
+        let mut fields: Vec<Field> = self
             .scanner
             .field_names
             .iter()
@@ -64,6 +79,12 @@ impl TableProvider for LogTableProvider {
                 Field::new(name, data_type, true)
             })
             .collect();
+        if self.add_file_path {
+            fields.push(Field::new("__FILE__", DataType::Utf8, true));
+        }
+        if self.add_raw {
+            fields.push(Field::new("__RAW__", DataType::Utf8, true));
+        }
         SchemaRef::new(Schema::new(fields))
     }
 

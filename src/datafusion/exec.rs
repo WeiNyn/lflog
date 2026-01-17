@@ -2,13 +2,14 @@
 
 use anyhow::Error;
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::memory::MemoryStream;
 use datafusion::physical_plan::{DisplayAs, ExecutionPlan, PlanProperties};
 use datafusion_common::Result;
+use glob::glob;
 use memmap2::Mmap;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::fs::File;
@@ -114,15 +115,46 @@ impl ExecutionPlan for LogTableExec {
             })
             .collect();
 
-        let partitions = parse(
-            &self.provider.file_path,
-            &self.provider.scanner,
-            &field_names,
-            &field_types,
-            self.projected_schema.clone(),
-            None, // Use default thread count
-        )
-        .map_err(|e| datafusion_common::DataFusionError::External(e.into()))?;
+        // Handle when provider.file_path is a glob path
+        let glb = glob(&self.provider.file_path)
+            .map_err(|e| datafusion_common::DataFusionError::External(e.into()))?;
+        let files = glb
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| datafusion_common::DataFusionError::External(e.into()))?;
+
+        if files.is_empty() {
+            return Err(datafusion_common::DataFusionError::External(
+                "No files found".into(),
+            ));
+        }
+
+        let add_file_path = self.provider.add_file_path
+            && self.projected_schema.column_with_name("__FILE__").is_some();
+        let add_raw =
+            self.provider.add_raw && self.projected_schema.column_with_name("__RAW__").is_some();
+
+        let files = files
+            .iter()
+            .map(|f| f.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        let partitions = files
+            .into_iter()
+            .map(|file| {
+                let ctx = ParseContext {
+                    file: &file,
+                    scanner: &self.provider.scanner,
+                    field_names: &field_names,
+                    field_types: &field_types,
+                    schema: self.projected_schema.clone(),
+                    add_file_path,
+                    add_raw,
+                    thread_count: self.provider.num_threads,
+                };
+                parse(ctx).map_err(|e| datafusion_common::DataFusionError::External(e.into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let partitions = partitions.into_iter().flatten().collect::<Vec<_>>();
 
         Ok(Box::pin(MemoryStream::try_new(
             partitions,
@@ -136,17 +168,32 @@ impl ExecutionPlan for LogTableExec {
     }
 }
 
-fn parse(
-    file: &str,
-    scanner: &Scanner,
-    field_names: &[&str],
-    field_types: &[&FieldType],
+struct ParseContext<'a> {
+    file: &'a str,
+    scanner: &'a Scanner,
+    field_names: &'a [&'a str],
+    field_types: &'a [&'a FieldType],
     schema: SchemaRef,
+    add_file_path: bool,
+    add_raw: bool,
     thread_count: Option<usize>,
-) -> Result<Vec<RecordBatch>, Error> {
-    let file = File::open(file)?;
+}
 
-    let mmap = unsafe { Mmap::map(&file)? };
+fn parse(ctx: ParseContext) -> Result<Vec<RecordBatch>, Error> {
+    let ParseContext {
+        file,
+        scanner,
+        field_names,
+        field_types,
+        schema,
+        add_file_path,
+        add_raw,
+        thread_count,
+    } = ctx;
+
+    let f = File::open(file)?;
+
+    let mmap = unsafe { Mmap::map(&f)? };
 
     // If thread_count is not provided, use LFLOGTHREADS environment variable
     let thread_count = thread_count.or_else(|| {
@@ -160,6 +207,36 @@ fn parse(
         .clamp(1, rayon::current_num_threads());
     let total_size = mmap.len();
     let chunk_size = total_size / chunk_count;
+
+    let mut additional_columns = Vec::new();
+    if add_file_path {
+        additional_columns.push("__FILE__");
+    }
+    if add_raw {
+        additional_columns.push("__RAW__");
+    }
+
+    let file_path_index = if add_file_path {
+        field_names
+            .iter()
+            .position(|&name| name == "__FILE__")
+            .unwrap()
+    } else {
+        0
+    };
+
+    let raw_index = if add_raw {
+        field_names
+            .iter()
+            .position(|&name| name == "__RAW__")
+            .unwrap()
+    } else {
+        0
+    };
+
+    let field_indices = scanner
+        .prepare_indices(field_names, &additional_columns)
+        .map_err(Error::msg)?;
 
     let partitions: Result<Vec<RecordBatch>, Error> = (0..chunk_count)
         .into_par_iter()
@@ -188,25 +265,34 @@ fn parse(
             if actual_start >= actual_end {
                 // Empty chunk, return empty batch
                 let columns = fields_builder.finish();
-                return RecordBatch::try_new(schema.clone(), columns)
+                let options = RecordBatchOptions::new().with_row_count(Some(0));
+                return RecordBatch::try_new_with_options(schema.clone(), columns, &options)
                     .map_err(|e| Error::msg(e.to_string()));
             }
 
             let section = &mmap[actual_start..actual_end];
             let section_str =
                 std::str::from_utf8(section).map_err(|e| Error::msg(e.to_string()))?;
-
-            let field_indices = scanner.prepare_indices(field_names);
             let mut values = Vec::with_capacity(field_indices.len());
 
+            let mut row_count = 0;
             for line in section_str.lines() {
                 if scanner.scan_direct(line, &field_indices, &mut values) {
+                    if add_file_path {
+                        values[file_path_index] = file;
+                    }
+                    if add_raw {
+                        values[raw_index] = line;
+                    }
                     fields_builder.push(field_types, &values);
+                    row_count += 1;
                 }
             }
 
             let columns = fields_builder.finish();
-            RecordBatch::try_new(schema.clone(), columns).map_err(|e| Error::msg(e.to_string()))
+            let options = RecordBatchOptions::new().with_row_count(Some(row_count));
+            RecordBatch::try_new_with_options(schema.clone(), columns, &options)
+                .map_err(|e| Error::msg(e.to_string()))
         })
         .collect();
 
@@ -238,6 +324,9 @@ mod tests {
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("loghub/Apache/Apache_2k.log"),
+            add_file_path: false,
+            add_raw: false,
+            num_threads: Some(8),
         };
 
         let _ = ctx.register_table("log", Arc::new(log_table));
@@ -254,6 +343,9 @@ mod tests {
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("loghub/Apache/Apache_2k.log"),
+            add_file_path: false,
+            add_raw: false,
+            num_threads: Some(8),
         };
 
         let _ = ctx.register_table("log_mac", Arc::new(log_table));
@@ -274,6 +366,9 @@ mod tests {
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("loghub/Apache/Apache_2k.log"),
+            add_file_path: false,
+            add_raw: false,
+            num_threads: Some(8),
         };
 
         let _ = ctx.register_table("log_int", Arc::new(log_table));
@@ -320,6 +415,9 @@ mod tests {
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("loghub/Apache/Apache_2k.log"),
+            add_file_path: false,
+            add_raw: false,
+            num_threads: Some(8),
         };
 
         let _ = ctx.register_table("log_proj", Arc::new(log_table));
@@ -392,6 +490,9 @@ mod tests {
         let log_table = LogTableProvider {
             scanner,
             file_path: temp_file.path().to_string_lossy().to_string(),
+            add_file_path: false,
+            add_raw: false,
+            num_threads: Some(8),
         };
 
         let _ = ctx.register_table("log_small", Arc::new(log_table));
@@ -416,6 +517,9 @@ mod tests {
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("/nonexistent/path/to/file.log"),
+            add_file_path: false,
+            add_raw: false,
+            num_threads: Some(8),
         };
 
         let _ = ctx.register_table("log_missing", Arc::new(log_table));
@@ -424,5 +528,67 @@ mod tests {
 
         // Should return an error, not panic
         assert!(result.is_err(), "Should return error for missing file");
+    }
+
+    #[tokio::test]
+    async fn test_log_table_provider_mixed_groups() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create a temp file
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "123 test_val").unwrap();
+        temp_file.flush().unwrap();
+        let path = temp_file.path().to_string_lossy().to_string();
+
+        let ctx = SessionContext::new();
+
+        // Pattern with mixed unnamed (\d+) and named groups
+        let pattern = r"^(\d+) (?P<name>\w+)$";
+        let scanner = Scanner::new(pattern.to_string());
+        let log_table = LogTableProvider {
+            scanner,
+            file_path: path.clone(),
+            add_file_path: true, // Request __FILE__
+            add_raw: true,       // Request __RAW__
+            num_threads: Some(1),
+        };
+
+        let _ = ctx.register_table("log_mixed", Arc::new(log_table));
+
+        // Select named field and metadata fields with quotes to preserve case
+        let df = ctx
+            .sql("SELECT name, \"__FILE__\", \"__RAW__\" FROM log_mixed")
+            .await
+            .unwrap();
+
+        let results = df.collect().await.unwrap();
+
+        assert!(!results.is_empty());
+        let batch = &results[0];
+
+        // Check "name" column (index 0)
+        let name_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .unwrap();
+        assert_eq!(name_col.value(0), "test_val");
+
+        // Check "__FILE__" column (index 1)
+        let file_col = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .unwrap();
+        assert_eq!(file_col.value(0), path);
+
+        // Check "__RAW__" column (index 2)
+        let raw_col = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .unwrap();
+        assert_eq!(raw_col.value(0), "123 test_val");
     }
 }

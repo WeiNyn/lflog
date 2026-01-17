@@ -7,7 +7,9 @@ Query log files with SQL using DataFusion and regex pattern macros.
 - 🔍 **SQL Queries** - Query log files using familiar SQL syntax via [DataFusion](https://datafusion.apache.org/)
 - 🧩 **Pattern Macros** - Use intuitive macros like `{{timestamp:datetime("%Y-%m-%d")}}` instead of raw regex
 - 📊 **Type Inference** - Automatic schema generation with proper types (Int32, Float64, String)
-- ⚡ **Fast** - Leverages DataFusion's optimized query engine
+- ⚡ **Fast** - Leverages DataFusion's optimized query engine with parallel processing
+- 📁 **Glob Patterns** - Query multiple files at once with patterns like `logs/*.log`
+- 🏷️ **Metadata Columns** - Access file path (`__FILE__`) and raw log lines (`__RAW__`)
 - 📝 **Config Profiles** - Define reusable log profiles in TOML config files
 - 💻 **Interactive REPL** - Query logs interactively with command history
 
@@ -32,6 +34,9 @@ lflog <log_file> [OPTIONS]
 | `--pattern <regex>` | Inline pattern (overrides profile) |
 | `-t, --table <name>` | Table name for SQL (default: `log`) |
 | `-q, --query <sql>` | Execute SQL query (omit for interactive mode) |
+| `-f, --add-file-path` | Add `__FILE__` column with source file path |
+| `-r, --add-raw` | Add `__RAW__` column with raw log line |
+| `-n, --num-threads <N>` | Number of threads (default: 8, or `LFLOGTHREADS` env) |
 
 ### Examples
 
@@ -40,6 +45,16 @@ lflog <log_file> [OPTIONS]
 lflog loghub/Apache/Apache_2k.log \
   --pattern '^\[{{time:any}}\] \[{{level:var_name}}\] {{message:any}}$' \
   --query "SELECT * FROM log WHERE level = 'error' LIMIT 10"
+
+# Query multiple files with glob pattern
+lflog 'logs/*.log' \
+  --pattern '{{ts:datetime}} [{{level:var_name}}] {{msg:any}}' \
+  --query "SELECT * FROM log"
+
+# Include file path and raw line in results
+lflog 'logs/*.log' --pattern '...' \
+  --add-file-path --add-raw \
+  --query 'SELECT level, "__FILE__", "__RAW__" FROM log'
 
 # Query with config profile
 lflog /var/log/apache.log --profile apache --query "SELECT * FROM log LIMIT 5"
@@ -109,6 +124,25 @@ You can also use raw regex with named capture groups:
 ^(?P<ip>\d+\.\d+\.\d+\.\d+) - (?P<method>\w+)
 ```
 
+## Metadata Columns
+
+When enabled, lflog adds special metadata columns to your query results:
+
+| Column | Flag | Description |
+|--------|------|-------------|
+| `__FILE__` | `-f, --add-file-path` | Absolute path of the source log file |
+| `__RAW__` | `-r, --add-raw` | The original, unparsed log line |
+
+These are useful when querying multiple files or when you need to see the original log line alongside parsed fields:
+
+```bash
+# Find errors across all log files with their source
+lflog 'logs/*.log' --pattern '...' --add-file-path \
+  --query 'SELECT "__FILE__", level, message FROM log WHERE level = '\''error'\'''
+```
+
+> **Note**: Use double quotes around `__FILE__` and `__RAW__` in SQL to preserve case.
+
 ## Library Usage
 
 ```rust
@@ -125,6 +159,29 @@ async fn main() -> anyhow::Result<()> {
     )?;
     
     lflog.query_and_show("SELECT * FROM log WHERE level = 'error'").await?;
+    Ok(())
+}
+```
+
+With glob patterns and metadata columns:
+
+```rust
+use lflog::{LfLog, QueryOptions};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let lflog = LfLog::new();
+    
+    // Query multiple files with metadata columns
+    lflog.register(
+        QueryOptions::new("logs/*.log")  // Glob pattern
+            .with_pattern(r#"^\[{{time:any}}\] \[{{level:var_name}}\] {{message:any}}$"#)
+            .with_add_file_path(true)    // Add __FILE__ column
+            .with_add_raw(true)          // Add __RAW__ column
+            .with_num_threads(Some(4))   // Use 4 threads
+    )?;
+    
+    lflog.query_and_show(r#"SELECT level, "__FILE__" FROM log WHERE level = 'error'"#).await?;
     Ok(())
 }
 ```
