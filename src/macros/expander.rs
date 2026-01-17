@@ -16,10 +16,11 @@ fn expand_macro(
     custom_macros: Option<&[CustomMacro]>,
 ) -> Result<(String, Option<FieldType>)> {
     // Check custom macros first
-    if let Some(customs) = custom_macros
-        && let Some(custom) = customs.iter().find(|m| m.name == name)
-    {
-        return Ok((custom.pattern.clone(), custom.type_hint.clone()));
+    if let Some(customs) = custom_macros {
+        if let Some(custom) = customs.iter().find(|m| m.name == name)
+        {
+            return Ok((custom.pattern.clone(), custom.type_hint.clone()));
+        }
     }
     // Fall back to builtin
     expand_builtin_macro(name, args)
