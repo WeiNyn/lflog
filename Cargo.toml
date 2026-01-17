@@ -1,6 +1,6 @@
 [package]
 name = "lflog"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "Query log files with SQL using DataFusion and regex pattern macros."
 license = "MIT"
