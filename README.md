@@ -176,6 +176,7 @@ pattern = '{{ip:ip}} - - \[{{time:any}}\] "{{method:var_name}} {{path:any}}" {{s
 | Macro | Description | Type |
 |-------|-------------|------|
 | `{{field:number}}` | Integer (digits) | Int32 |
+| `{{field:float}}` | Floating point number | Float64 |
 | `{{field:string}}` | Non-greedy string | String |
 | `{{field:any}}` | Non-greedy match all | String |
 | `{{field:var_name}}` | Identifier (`[A-Za-z_][A-Za-z0-9_]*`) | String |
