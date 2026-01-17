@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 
 use crate::macros::parser::{CustomMacro, parse_macro_invocation};
-use crate::types::FieldType;
+use crate::types::{DateTime, FieldType};
 
 /// Expand a single macro - checks custom macros first, then falls back to builtins.
 fn expand_macro(
@@ -45,6 +45,10 @@ fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<F
             }
         }
         "string" | "str" => Ok((r".+?".to_string(), Some(FieldType::String))),
+        "float" | "double" => Ok((
+            r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?".to_string(),
+            Some(FieldType::Float),
+        )),
         "var_name" | "ident" => Ok((
             r"[A-Za-z_][A-Za-z0-9_]*".to_string(),
             Some(FieldType::String),
@@ -64,7 +68,12 @@ fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<F
         }
         "datetime" | "ts" => {
             if args.is_empty() {
-                Ok((r"\S+".to_string(), Some(FieldType::DateTime)))
+                Ok((
+                    r"\S+".to_string(),
+                    Some(FieldType::DateTime(DateTime::new(Some(vec![
+                        "%Y-%m-%dT%H:%M:%S%.f".to_string(),
+                    ])))),
+                ))
             } else {
                 // translate strftime-like format string(s) into a regex fragment
                 let mut frags = Vec::new();
@@ -73,11 +82,14 @@ fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<F
                     frags.push(frag);
                 }
                 if frags.len() == 1 {
-                    Ok((frags.into_iter().next().unwrap(), Some(FieldType::DateTime)))
+                    Ok((
+                        frags.into_iter().next().unwrap(),
+                        Some(FieldType::DateTime(DateTime::new(Some(args.into())))),
+                    ))
                 } else {
                     Ok((
                         format!("(?:{})", frags.join("|")),
-                        Some(FieldType::DateTime),
+                        Some(FieldType::DateTime(DateTime::new(Some(args.into())))),
                     ))
                 }
             }
@@ -223,7 +235,10 @@ mod tests {
         let (_expanded, fields, hints) = expand_macros(pat, None).unwrap();
         assert_eq!(fields.len(), 1);
         let hint = hints.get(&fields[0]).unwrap();
-        assert_eq!(*hint, FieldType::DateTime);
+        assert_eq!(
+            *hint,
+            FieldType::DateTime(DateTime::new(Some(vec!["%Y-%m-%d %H:%M:%S".to_string()])))
+        );
     }
 
     #[test]
@@ -233,7 +248,13 @@ mod tests {
         assert!(expanded.contains("|"));
         assert_eq!(fields.len(), 1);
         let hint = hints.get(&fields[0]).unwrap();
-        assert_eq!(*hint, FieldType::DateTime);
+        assert_eq!(
+            *hint,
+            FieldType::DateTime(DateTime::new(Some(vec![
+                "%Y-%m-%d %H:%M:%S".to_string(),
+                "%d/%b/%Y:%H:%M:%S".to_string()
+            ])))
+        );
         let re = regex::Regex::new(&expanded).unwrap();
         assert!(re.is_match("2023-05-03 12:34:56 - msg"));
         assert!(re.is_match("03/May/2023:12:34:56 - msg"));
@@ -252,5 +273,43 @@ mod tests {
         assert!(expanded.contains(r"\d{1,3}(?:\.\d{1,3}){3}"));
         assert_eq!(fields, vec!["client".to_string()]);
         assert_eq!(*hints.get("client").unwrap(), FieldType::String);
+    }
+
+    #[test]
+    fn test_datetime_macro_default() {
+        let pat = "{{ts:datetime}} - msg";
+        let (_expanded, fields, hints) = expand_macros(pat, None).unwrap();
+        assert_eq!(fields.len(), 1);
+        let hint = hints.get(&fields[0]).unwrap();
+        assert_eq!(
+            *hint,
+            FieldType::DateTime(DateTime::new(Some(vec![
+                "%Y-%m-%dT%H:%M:%S%.f".to_string()
+            ])))
+        );
+    }
+
+    #[test]
+    fn test_float_macro() {
+        let pat = "value: {{val:float}}";
+        let (expanded, fields, hints) = expand_macros(pat, None).unwrap();
+
+        let re = regex::Regex::new(&expanded).unwrap();
+
+        // Integer compatible
+        assert!(re.is_match("value: 123"));
+        assert!(re.is_match("value: -5"));
+
+        // Standard floats
+        assert!(re.is_match("value: 123.456"));
+        assert!(re.is_match("value: 0.1"));
+        assert!(re.is_match("value: .5"));
+
+        // Scientific notation
+        assert!(re.is_match("value: 1.2e5"));
+        assert!(re.is_match("value: 1E-10"));
+
+        assert_eq!(fields, vec!["val".to_string()]);
+        assert_eq!(*hints.get("val").unwrap(), FieldType::Float);
     }
 }

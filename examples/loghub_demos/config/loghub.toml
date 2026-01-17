@@ -2,7 +2,7 @@
 [[custom_macros]]
 name = "syslog_ts"
 pattern = '[A-Z][a-z]{2}\s+\d+\s\d{2}:\d{2}:\d{2}'
-type_hint = "DateTime"
+type_hint = "String"
 description = "Syslog timestamp (e.g., Jun 14 15:16:01)"
 
 [[custom_macros]]
@@ -19,31 +19,31 @@ description = "IPv4 address"
 name = "hdfs"
 description = "HDFS log format"
 # Sample: 081109 203615 148 INFO dfs.DataNode$PacketResponder: PacketResponder 1 ...
-pattern = '{{date:number}} {{time:number}} {{pid:number}} {{level:var_name}} {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:datetime("%y%m%d %H%M%S")}} {{pid:number}} {{level:var_name}} {{component:any}}: {{message:any}}'
 
 [[profiles]]
 name = "hadoop"
 description = "Hadoop MapReduce log format"
 # Sample: 2015-10-18 18:01:47,978 INFO [main] org.apache.hadoop.mapreduce.v2.app.MRAppMaster: ...
-pattern = '{{date:datetime("%Y-%m-%d")}} {{time:datetime("%H:%M:%S,%f")}} {{level:var_name}} \[{{thread:any}}\] {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S,%f")}} {{level:var_name}} \[{{thread:any}}\] {{component:any}}: {{message:any}}'
 
 [[profiles]]
 name = "spark"
 description = "Spark log format"
 # Sample: 17/06/09 20:10:40 INFO executor.CoarseGrainedExecutorBackend: ...
-pattern = '{{date:datetime("%y/%m/%d")}} {{time:datetime("%H:%M:%S")}} {{level:var_name}} {{component:any}}: {{message:any}}'
+pattern = '{{timestamp:datetime("%y/%m/%d %H:%M:%S")}} {{level:var_name}} {{component:any}}: {{message:any}}'
 
 [[profiles]]
 name = "zookeeper"
 description = "Zookeeper log format"
 # Sample: 2015-07-29 17:41:44,747 - INFO  [QuorumPeer[myid=1]/0:0:0:0:0:0:0:0:2181:FastLeaderElection@774] - Notification time out: 3200
-pattern = '{{date:datetime("%Y-%m-%d")}} {{time:datetime("%H:%M:%S,%f")}} - {{level:var_name}}\s+\[{{component:any}}\] - {{message:any}}'
+pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S,%f")}} - {{level:var_name}}\s+\[{{component:any}}\] - {{message:any}}'
 
 [[profiles]]
 name = "openstack"
 description = "OpenStack log format"
 # Sample: nova-api.log.1.2017-05-16_13:53:08 2017-05-16 00:00:00.008 25746 INFO nova.osapi_compute.wsgi.server ...
-pattern = '{{filename:string}} {{date:datetime("%Y-%m-%d")}} {{time:datetime("%H:%M:%S.%f")}} {{pid:number}} {{level:var_name}} {{component:any}} \[{{req_id:any}}\] {{message:any}}'
+pattern = '{{filename:string}} {{timestamp:datetime("%Y-%m-%d %H:%M:%S.%f")}} {{pid:number}} {{level:var_name}} {{component:any}} \[{{req_id:any}}\] {{message:any}}'
 
 # ==========================================
 # Supercomputers
@@ -87,7 +87,7 @@ pattern = '{{timestamp:syslog_ts}} {{hostname:any}} {{component:any}}: {{message
 name = "windows"
 description = "Windows CBS/CSI log"
 # Sample: 2016-09-28 04:30:30, Info                  CBS    Loaded Servicing Stack ...
-pattern = '{{date:datetime("%Y-%m-%d")}} {{time:datetime("%H:%M:%S")}}, {{level:var_name}}\s+{{component:var_name}}\s+{{message:any}}'
+pattern = '{{timestamp:datetime("%Y-%m-%d %H:%M:%S")}}, {{level:var_name}}\s+{{component:var_name}}\s+{{message:any}}'
 
 # ==========================================
 # Mobile Systems
@@ -97,7 +97,7 @@ pattern = '{{date:datetime("%Y-%m-%d")}} {{time:datetime("%H:%M:%S")}}, {{level:
 name = "android"
 description = "Android logcat"
 # Sample: 03-17 16:13:38.811  1702  2395 D WindowManager: ...
-pattern = '{{date:datetime("%m-%d")}}\s+{{time:datetime("%H:%M:%S.%f")}}\s+{{pid:number}}\s+{{tid:number}}\s+{{level:var_name}}\s+{{component:any}}: {{message:any}}'
+pattern = '{{timestamp:datetime("%m-%d %H:%M:%S.%f")}}\s+{{pid:number}}\s+{{tid:number}}\s+{{level:var_name}}\s+{{component:any}}: {{message:any}}'
 
 [[profiles]]
 name = "healthapp"

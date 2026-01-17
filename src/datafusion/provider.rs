@@ -1,7 +1,7 @@
 //! LogTableProvider implementation for DataFusion.
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::catalog::{Session, TableProvider};
 use datafusion::common::Result;
 use datafusion::logical_expr::{Expr, TableType};
@@ -56,6 +56,9 @@ impl TableProvider for LogTableProvider {
                 let data_type = match self.scanner.type_hints.get(name) {
                     Some(FieldType::Int) => DataType::Int32,
                     Some(FieldType::Float) => DataType::Float64,
+                    Some(FieldType::DateTime(_)) => {
+                        DataType::Timestamp(TimeUnit::Microsecond, None)
+                    }
                     _ => DataType::Utf8,
                 };
                 Field::new(name, data_type, true)

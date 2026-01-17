@@ -2,6 +2,7 @@
 
 use datafusion::arrow::array::{
     ArrayBuilder, ArrayRef, Float64Builder, Int32Builder, StringBuilder,
+    TimestampMicrosecondBuilder,
 };
 
 use crate::types::FieldType;
@@ -20,7 +21,9 @@ impl FieldsBuilder {
                 FieldType::String => Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
                 FieldType::Int => Box::new(Int32Builder::new()) as Box<dyn ArrayBuilder>,
                 FieldType::Float => Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-                FieldType::DateTime => Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
+                FieldType::DateTime(_) => {
+                    Box::new(TimestampMicrosecondBuilder::new()) as Box<dyn ArrayBuilder>
+                }
                 FieldType::Enum => Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
                 FieldType::Json => Box::new(StringBuilder::new()) as Box<dyn ArrayBuilder>,
             })
@@ -36,12 +39,22 @@ impl FieldsBuilder {
         for ((builder, field_type), value) in self.builders.iter_mut().zip(field_types).zip(values)
         {
             match field_type {
-                FieldType::String | FieldType::DateTime | FieldType::Enum | FieldType::Json => {
+                FieldType::String | FieldType::Enum | FieldType::Json => {
                     builder
                         .as_any_mut()
                         .downcast_mut::<StringBuilder>()
                         .unwrap()
                         .append_value(value);
+                }
+                FieldType::DateTime(d) => {
+                    let datetime_builder = builder
+                        .as_any_mut()
+                        .downcast_mut::<TimestampMicrosecondBuilder>()
+                        .unwrap();
+                    match d.parse(value) {
+                        Some(i) => datetime_builder.append_value(i),
+                        None => datetime_builder.append_null(),
+                    }
                 }
                 FieldType::Int => {
                     let int_builder = builder.as_any_mut().downcast_mut::<Int32Builder>().unwrap();
