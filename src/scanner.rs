@@ -3,6 +3,7 @@
 use regex::Regex;
 use std::collections::HashMap;
 
+use crate::error::{Error, Result};
 use crate::macros::expand_macros;
 use crate::macros::parser::CustomMacro;
 use crate::types::FieldType;
@@ -24,17 +25,19 @@ impl Scanner {
     ///
     /// The pattern can contain macros like `{{field:datetime("%Y-%m-%d")}}` or
     /// standard regex named capture groups like `(?P<name>...)`.
-    pub fn new(pattern: String) -> Self {
+    pub fn new(pattern: String) -> Result<Self> {
         Self::with_custom_macros(pattern, None)
     }
 
     /// Create a new Scanner with custom macros.
     ///
     /// Custom macros are checked before builtin macros during expansion.
-    pub fn with_custom_macros(pattern: String, custom_macros: Option<&[CustomMacro]>) -> Self {
-        let (expanded, mut field_names, type_hints) =
-            expand_macros(&pattern, custom_macros).unwrap();
-        let regex = Regex::new(&expanded).unwrap();
+    pub fn with_custom_macros(
+        pattern: String,
+        custom_macros: Option<&[CustomMacro]>,
+    ) -> Result<Self> {
+        let (expanded, mut field_names, type_hints) = expand_macros(&pattern, custom_macros)?;
+        let regex = Regex::new(&expanded)?;
 
         let indices_map = regex
             .capture_names()
@@ -51,12 +54,12 @@ impl Scanner {
                 .collect();
         }
 
-        Self {
+        Ok(Self {
             regex,
             indices_map,
             field_names,
             type_hints,
-        }
+        })
     }
 
     /// Prepare capture indices for a list of fields.
@@ -70,7 +73,7 @@ impl Scanner {
         &self,
         field_names: &[&str],
         additional_columns: &[&str],
-    ) -> Result<Vec<usize>, String> {
+    ) -> Result<Vec<usize>> {
         let capture_count = self.regex.captures_len();
         let additional_indices_map = additional_columns
             .iter()
@@ -85,7 +88,7 @@ impl Scanner {
             } else if let Some(index) = additional_indices_map.get(*name) {
                 indices.push(*index);
             } else {
-                return Err(format!("Field name not found: {}", name));
+                return Err(Error::other(format!("Field name not found: {}", name)));
             }
         }
         Ok(indices)
@@ -161,7 +164,7 @@ mod tests {
     #[test]
     fn test_scanner_integration() {
         let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
         let line = "[Sun Dec 04 04:47:44 2005] [notice] workerEnv.init() ok /etc/httpd/conf/workers2.properties";
         let fields = scanner.scan(line).unwrap();
         assert_eq!(fields.len(), 3);
@@ -173,7 +176,7 @@ mod tests {
     fn test_scanner_no_named_groups_panic() {
         // Pattern with no named groups
         let pattern = r"^\d+$";
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
 
         // Field names should be empty since there are no named groups
         assert!(scanner.field_names.is_empty());
@@ -195,7 +198,7 @@ mod tests {
         // Pattern: Unnamed group (\d+) then named group (?P<name>\w+)
         // Captures: 0 (all), 1 (digits), 2 (name) -> captures_len = 3
         let pattern = r"^(\d+) (?P<name>\w+)$";
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
 
         assert_eq!(scanner.field_names, vec!["name"]);
 

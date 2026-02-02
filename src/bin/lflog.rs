@@ -7,8 +7,8 @@
 //! 2. LFLOG_CONFIG environment variable
 //! 3. ~/.config/lflog/config.toml (default)
 
-use anyhow::Result;
 use clap::Parser;
+use lflog::error::{Error, Result};
 use std::io::{Write, stdout};
 use std::path::PathBuf;
 
@@ -148,13 +148,14 @@ async fn main() -> Result<()> {
     } else {
         // No config file - must use inline pattern
         if cli.pattern.is_none() {
-            anyhow::bail!(
+            return Err(Error::Config(
                 "No config file found. Either:\n\
                  - Create ~/.config/lflog/config.toml\n\
                  - Set LFLOG_CONFIG environment variable\n\
                  - Use --config <path>\n\
                  - Use --pattern <regex> without a config file"
-            );
+                    .into(),
+            ));
         }
         LfLog::new()
     };

@@ -1,6 +1,6 @@
 //! LogTableExec execution plan implementation.
 
-use anyhow::Error;
+use crate::error::{Error as LfError, Result as LfResult};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::execution::SendableRecordBatchStream;
@@ -117,10 +117,10 @@ impl ExecutionPlan for LogTableExec {
 
         // Handle when provider.file_path is a glob path
         let glb = glob(&self.provider.file_path)
-            .map_err(|e| datafusion_common::DataFusionError::External(e.into()))?;
+            .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
         let files = glb
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| datafusion_common::DataFusionError::External(e.into()))?;
+            .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
 
         if files.is_empty() {
             return Err(datafusion_common::DataFusionError::External(
@@ -150,7 +150,7 @@ impl ExecutionPlan for LogTableExec {
                     add_raw,
                     thread_count: self.provider.num_threads,
                 };
-                parse(ctx).map_err(|e| datafusion_common::DataFusionError::External(e.into()))
+                parse(ctx).map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -179,7 +179,7 @@ struct ParseContext<'a> {
     thread_count: Option<usize>,
 }
 
-fn parse(ctx: ParseContext) -> Result<Vec<RecordBatch>, Error> {
+fn parse(ctx: ParseContext) -> LfResult<Vec<RecordBatch>> {
     let ParseContext {
         file,
         scanner,
@@ -234,11 +234,9 @@ fn parse(ctx: ParseContext) -> Result<Vec<RecordBatch>, Error> {
         0
     };
 
-    let field_indices = scanner
-        .prepare_indices(field_names, &additional_columns)
-        .map_err(Error::msg)?;
+    let field_indices = scanner.prepare_indices(field_names, &additional_columns)?;
 
-    let partitions: Result<Vec<RecordBatch>, Error> = (0..chunk_count)
+    let partitions: std::result::Result<Vec<RecordBatch>, LfError> = (0..chunk_count)
         .into_par_iter()
         .map(|i| {
             let mut fields_builder = FieldsBuilder::new(field_types);
@@ -267,12 +265,11 @@ fn parse(ctx: ParseContext) -> Result<Vec<RecordBatch>, Error> {
                 let columns = fields_builder.finish();
                 let options = RecordBatchOptions::new().with_row_count(Some(0));
                 return RecordBatch::try_new_with_options(schema.clone(), columns, &options)
-                    .map_err(|e| Error::msg(e.to_string()));
+                    .map_err(LfError::from);
             }
 
             let section = &mmap[actual_start..actual_end];
-            let section_str =
-                std::str::from_utf8(section).map_err(|e| Error::msg(e.to_string()))?;
+            let section_str = std::str::from_utf8(section)?;
             let mut values = Vec::with_capacity(field_indices.len());
 
             let mut row_count = 0;
@@ -292,7 +289,7 @@ fn parse(ctx: ParseContext) -> Result<Vec<RecordBatch>, Error> {
             let columns = fields_builder.finish();
             let options = RecordBatchOptions::new().with_row_count(Some(row_count));
             RecordBatch::try_new_with_options(schema.clone(), columns, &options)
-                .map_err(|e| Error::msg(e.to_string()))
+                .map_err(LfError::from)
         })
         .collect();
 
@@ -320,7 +317,7 @@ mod tests {
         let ctx = SessionContext::new();
 
         let pattern = r"^\[(?P<time>\w{3} \w{3} \d{1,2} \d{2}:\d{2}:\d{2} \d{4})\] \[(?P<level>[^\]]+)\] (?P<message>.*)$";
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("loghub/Apache/Apache_2k.log"),
@@ -339,7 +336,7 @@ mod tests {
         let ctx = SessionContext::new();
 
         let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("loghub/Apache/Apache_2k.log"),
@@ -362,7 +359,7 @@ mod tests {
 
         // Pattern for jk2_init() messages: "jk2_init() Found child 6725 in scoreboard slot 10"
         let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] jk2_init\(\) Found child {{child_pid:number}} in scoreboard slot {{slot:number}}$"#;
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("loghub/Apache/Apache_2k.log"),
@@ -406,7 +403,7 @@ mod tests {
 
         // Pattern with 3 fields: time, level, message
         let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
 
         // Verify scanner has 3 fields
         assert_eq!(scanner.field_names.len(), 3);
@@ -486,7 +483,7 @@ mod tests {
         let ctx = SessionContext::new();
 
         let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
         let log_table = LogTableProvider {
             scanner,
             file_path: temp_file.path().to_string_lossy().to_string(),
@@ -513,7 +510,7 @@ mod tests {
         let ctx = SessionContext::new();
 
         let pattern = r#"^\[{{time:datetime("%a %b %d %H:%M:%S %Y")}}\] \[{{level:var_name}}\] {{message:any}}$"#;
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
         let log_table = LogTableProvider {
             scanner,
             file_path: String::from("/nonexistent/path/to/file.log"),
@@ -545,7 +542,7 @@ mod tests {
 
         // Pattern with mixed unnamed (\d+) and named groups
         let pattern = r"^(\d+) (?P<name>\w+)$";
-        let scanner = Scanner::new(pattern.to_string());
+        let scanner = Scanner::new(pattern.to_string()).unwrap();
         let log_table = LogTableProvider {
             scanner,
             file_path: path.clone(),

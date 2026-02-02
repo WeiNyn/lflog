@@ -2,7 +2,7 @@
 //!
 //! Parses macro invocations like `field:datetime("%Y-%m-%d")` into structured data.
 
-use anyhow::{Result, bail};
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::FieldType;
@@ -68,13 +68,16 @@ pub fn split_args(s: &str) -> Vec<String> {
 pub fn parse_macro_invocation(s: &str) -> Result<MacroInvocation> {
     let s = s.trim();
     if s.is_empty() {
-        bail!("empty macro token");
+        return Err(Error::MacroParse("empty macro token".into()));
     }
     if let Some(paren_start) = s.find('(') {
         let before = &s[..paren_start];
         let after = &s[paren_start + 1..];
         if !after.ends_with(')') {
-            bail!("unclosed parenthesis in macro invocation: {}", s);
+            return Err(Error::MacroParse(format!(
+                "unclosed parenthesis in macro invocation: {}",
+                s
+            )));
         }
         let inside = &after[..after.len() - 1];
         if let Some(colon_pos) = before.find(':') {

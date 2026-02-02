@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Result, bail};
+use crate::error::{Error, Result};
 
 use crate::macros::parser::{CustomMacro, parse_macro_invocation};
 use crate::types::{DateTime, FieldType};
@@ -40,7 +40,7 @@ fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<F
                 } else if a.chars().all(|c| c.is_ascii_digit()) {
                     Ok((format!(r"\d{{{}}}", a), Some(FieldType::Int)))
                 } else {
-                    bail!("invalid number macro arg: {}", a)
+                    Err(Error::Macro(format!("invalid number macro arg: {}", a)))
                 }
             }
         }
@@ -60,7 +60,9 @@ fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<F
         )),
         "enum" => {
             if args.is_empty() {
-                bail!("enum macro requires comma-separated values");
+                return Err(Error::Macro(
+                    "enum macro requires comma-separated values".into(),
+                ));
             }
             let vals = args.join(",");
             let items: Vec<String> = vals.split(',').map(|v| regex::escape(v.trim())).collect();
@@ -95,7 +97,7 @@ fn expand_builtin_macro(name: &str, args: &[String]) -> Result<(String, Option<F
             }
         }
         "any" => Ok((r".+?".to_string(), Some(FieldType::String))),
-        _ => bail!("unknown macro '{}'", name),
+        _ => Err(Error::Macro(format!("unknown macro '{}'", name))),
     }
 }
 
@@ -122,10 +124,17 @@ fn format_to_regex(fmt: &str) -> Result<String> {
                     'b' | 'B' => out.push_str(r"[A-Za-z]+"),
                     'a' | 'A' => out.push_str(r"[A-Za-z]+"),
                     '%' => out.push('%'),
-                    other => bail!("unsupported datetime directive: %{}", other),
+                    other => {
+                        return Err(Error::Macro(format!(
+                            "unsupported datetime directive: %{}",
+                            other
+                        )));
+                    }
                 }
             } else {
-                bail!("incomplete datetime format string: ends with %");
+                return Err(Error::Macro(
+                    "incomplete datetime format string: ends with %".into(),
+                ));
             }
         } else {
             // escape regex metacharacters in literals
@@ -175,7 +184,7 @@ pub fn expand_macros(
                 j += 1;
             }
             if !found {
-                bail!("unclosed '{{{{' in pattern");
+                return Err(Error::Macro("unclosed '{{' in pattern".into()));
             }
             let content = &pattern[i + 2..j];
             let inv = parse_macro_invocation(content)?;

@@ -2,7 +2,7 @@
 //!
 //! Provides high-level API for loading configuration and querying log files with SQL.
 
-use anyhow::{Result, bail};
+use crate::error::{Error, Result};
 use datafusion::prelude::{DataFrame, SessionContext};
 use std::sync::Arc;
 
@@ -126,40 +126,41 @@ impl LfLog {
     /// 3. Error if neither is provided
     pub fn register(&self, options: QueryOptions) -> Result<()> {
         // Determine the pattern to use
-        let (pattern, custom_macros) = if let Some(ref override_pattern) = options.pattern_override
-        {
-            // Use override pattern with profile's macros if available
-            let macros = if let (Some(profiles), Some(profile_name)) =
-                (&self.profiles, &options.profile_name)
-            {
-                profiles
-                    .get_profile(profile_name)
-                    .map(|p| p.custom_macros.clone())
+        let (pattern, custom_macros) =
+            if let Some(ref override_pattern) = options.pattern_override {
+                // Use override pattern with profile's macros if available
+                let macros = if let (Some(profiles), Some(profile_name)) =
+                    (&self.profiles, &options.profile_name)
+                {
+                    profiles
+                        .get_profile(profile_name)
+                        .map(|p| p.custom_macros.clone())
+                } else {
+                    self.profiles
+                        .as_ref()
+                        .map(|profiles| profiles.custom_macros.clone())
+                };
+                (override_pattern.clone(), macros)
+            } else if let Some(ref profile_name) = options.profile_name {
+                // Use profile's pattern
+                let profiles = self.profiles.as_ref().ok_or_else(|| {
+                    Error::Config("No profiles loaded, cannot use --profile".into())
+                })?;
+                let profile = profiles.get_profile(profile_name).ok_or_else(|| {
+                    Error::Config(format!("Profile '{}' not found", profile_name))
+                })?;
+                (profile.pattern.clone(), Some(profile.custom_macros.clone()))
             } else {
-                self.profiles
-                    .as_ref()
-                    .map(|profiles| profiles.custom_macros.clone())
+                return Err(Error::Config(
+                    "Either --profile or --pattern must be provided".into(),
+                ));
             };
-            (override_pattern.clone(), macros)
-        } else if let Some(ref profile_name) = options.profile_name {
-            // Use profile's pattern
-            let profiles = self
-                .profiles
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("No profiles loaded, cannot use --profile"))?;
-            let profile = profiles
-                .get_profile(profile_name)
-                .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
-            (profile.pattern.clone(), Some(profile.custom_macros.clone()))
-        } else {
-            bail!("Either --profile or --pattern must be provided");
-        };
 
         // Create scanner with the pattern and custom macros
         let scanner = if let Some(macros) = custom_macros {
-            Scanner::with_custom_macros(pattern, Some(&macros))
+            Scanner::with_custom_macros(pattern, Some(&macros))?
         } else {
-            Scanner::new(pattern)
+            Scanner::new(pattern)?
         };
 
         // Create table provider and register it

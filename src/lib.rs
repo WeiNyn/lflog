@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod datafusion;
+pub mod error;
 pub mod macros;
 pub mod scanner;
 pub mod types;
